@@ -60,3 +60,6 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# Compound Engineering machine-local configuration
+.compound-engineering/*.local.yaml
