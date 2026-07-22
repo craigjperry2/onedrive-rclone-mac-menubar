@@ -22,7 +22,8 @@ struct SyncDomainTests {
     }
 
     @Test func transcriptStoreReturnsOnlyLatestThirtyLines() throws {
-        let file = URL(filePath: "/tmp/onedrive-rclone-transcript-test.log")
+        let file = FileManager.default.temporaryDirectory.appending(path: "onedrive-rclone-transcript-\(UUID().uuidString).log")
+        defer { try? FileManager.default.removeItem(at: file) }
         try (1...35).map(String.init).joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
 
         let lines = TranscriptStore(fileURL: file).displayLines()
@@ -32,7 +33,8 @@ struct SyncDomainTests {
     }
 
     @Test func transcriptStoreTrimsPersistedOutput() throws {
-        let file = URL(filePath: "/tmp/onedrive-rclone-transcript-trim-test.log")
+        let file = FileManager.default.temporaryDirectory.appending(path: "onedrive-rclone-transcript-trim-\(UUID().uuidString).log")
+        defer { try? FileManager.default.removeItem(at: file) }
         let line = String(repeating: "x", count: 1024)
         try Array(repeating: line, count: 100).joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
 

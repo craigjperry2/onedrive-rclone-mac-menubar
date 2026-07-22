@@ -10,8 +10,7 @@ struct MenuBarView: View {
         if let latestRun = coordinator.latestRun {
             Text("Most recent sync: \(latestRun.finishedAt.formatted(date: .abbreviated, time: .shortened))")
         }
-        if case let .disabled(reason) = coordinator.status { Text(reason) }
-        if case let .unhealthy(reason) = coordinator.status { Text(reason) }
+        if let reason = coordinator.status.reason { Text(reason) }
         if case .running = coordinator.status { Text("rclone is running…") }
 
         Menu("Latest run output") {

@@ -60,14 +60,17 @@ final class SyncCoordinator: ObservableObject {
 
     func refreshStatus(now: Date = Date()) {
         let validation = settings?.validationError() ?? "No valid rclone configuration was found."
-        status = evaluator.status(validationError: validation, isRunning: running, latestRun: latestRun, now: now, awakeSince: awakeSince)
+        status = evaluatedStatus(validationError: validation, now: now)
     }
 
     private func validateConfiguration() async {
         guard let settings else { return }
         let validation = await runner.validate(settings)
-        guard validation == nil else { status = .disabled(reason: validation!); return }
-        status = evaluator.status(validationError: nil, isRunning: running, latestRun: latestRun, now: Date(), awakeSince: awakeSince)
+        if let validation {
+            status = .disabled(reason: validation)
+            return
+        }
+        status = evaluatedStatus(validationError: nil)
         scheduler.start(interval: settings.intervalSeconds) { [weak self] in self?.syncNow() }
     }
 
@@ -86,11 +89,31 @@ final class SyncCoordinator: ObservableObject {
         let finishedAt = Date()
         let previousSuccess = latestRun?.lastSuccessAt
         let succeeded = result.exitCode == 0
-        let record = SyncRunRecord(startedAt: startedAt, finishedAt: finishedAt, outcome: succeeded ? .success : .failure, failureReason: succeeded ? nil : result.output.split(whereSeparator: \.isNewline).last.map(String.init) ?? "rclone exited with status \(result.exitCode).", lastSuccessAt: succeeded ? finishedAt : previousSuccess)
+        let failureReason = succeeded
+            ? nil
+            : result.failureReason ?? "rclone exited with status \(result.exitCode)."
+        let lastSuccessAt = succeeded ? finishedAt : previousSuccess
+        let record = SyncRunRecord(
+            startedAt: startedAt,
+            finishedAt: finishedAt,
+            outcome: succeeded ? .success : .failure,
+            failureReason: failureReason,
+            lastSuccessAt: lastSuccessAt
+        )
         latestRun = record
         try? runStateStore.save(record)
-        transcriptLines = transcriptStore.displayLines()
+        transcriptLines = result.lines
         running = false
-        status = evaluator.status(validationError: nil, isRunning: false, latestRun: latestRun, now: finishedAt, awakeSince: awakeSince)
+        status = evaluatedStatus(validationError: nil, now: finishedAt)
+    }
+
+    private func evaluatedStatus(validationError: String?, now: Date = Date()) -> SyncStatus {
+        evaluator.status(
+            validationError: validationError,
+            isRunning: running,
+            latestRun: latestRun,
+            now: now,
+            awakeSince: awakeSince
+        )
     }
 }

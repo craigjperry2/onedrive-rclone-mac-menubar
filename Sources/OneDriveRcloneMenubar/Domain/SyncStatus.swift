@@ -26,6 +26,13 @@ enum SyncStatus: Equatable, Sendable {
         case .unhealthy: "exclamationmark.triangle"
         }
     }
+
+    var reason: String? {
+        switch self {
+        case let .disabled(reason), let .unhealthy(reason): reason
+        case .waitingForFirstSync, .running, .healthy: nil
+        }
+    }
 }
 
 struct SyncRunRecord: Codable, Equatable, Sendable {
