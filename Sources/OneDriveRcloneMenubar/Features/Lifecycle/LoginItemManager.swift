@@ -2,6 +2,7 @@ import ServiceManagement
 
 enum LoginItemManager {
     static func register() -> String? {
+        if SMAppService.mainApp.status == .enabled { return nil }
         do {
             try SMAppService.mainApp.register()
             return nil

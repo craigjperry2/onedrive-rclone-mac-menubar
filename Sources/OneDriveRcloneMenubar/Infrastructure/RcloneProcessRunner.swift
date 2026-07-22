@@ -7,12 +7,17 @@ actor RcloneProcessRunner {
         let exitCode: Int32
         let lines: [String]
         let failureReason: String?
+        let persistenceWarning: String?
     }
 
-    private let timeout: TimeInterval = 30 * 60
+    private let timeout: TimeInterval
+
+    init(timeout: TimeInterval = 30 * 60) {
+        self.timeout = timeout
+    }
 
     func validate(_ settings: SyncSettings) async -> String? {
-        if let error = settings.validationError() { return error }
+        if let error = settings.configurationError() { return error }
         let result = await runProcess(executable: settings.rcloneExecutablePath, arguments: ["listremotes"], environment: ["RCLONE_CONFIG": settings.configPath], transcriptURL: nil)
         guard result.exitCode == 0 else { return "Unable to read the rclone configuration." }
         return result.lines.contains("\(settings.remoteName):") ? nil : "The configured OneDrive remote was not found."
@@ -37,7 +42,7 @@ actor RcloneProcessRunner {
         if let transcriptURL {
             FileManager.default.createFile(atPath: transcriptURL.path(), contents: nil)
             guard let transcriptHandle = try? FileHandle(forWritingTo: transcriptURL) else {
-                return Result(exitCode: -1, lines: [], failureReason: "Unable to create the rclone output log.")
+                return Result(exitCode: -1, lines: [], failureReason: "Unable to create the rclone output log.", persistenceWarning: nil)
             }
             try? transcriptHandle.close()
         }
@@ -78,12 +83,20 @@ actor RcloneProcessRunner {
 
         let outputData = await outputTask.value
         let lines = TranscriptStore.displayLines(from: outputData)
-        if let transcriptURL { TranscriptStore(fileURL: transcriptURL).replace(with: outputData) }
-        let timeoutReason = execution.timedOut ? "rclone timed out after 30 minutes." : nil
+        var persistenceWarning: String?
+        if let transcriptURL {
+            do {
+                try TranscriptStore(fileURL: transcriptURL).replace(with: outputData)
+            } catch {
+                persistenceWarning = "The latest transcript could not be saved: \(error.localizedDescription)"
+            }
+        }
+        let timeoutReason = execution.timedOut ? "rclone timed out after \(Int(timeout / 60)) minutes." : nil
         return Result(
             exitCode: execution.exitCode,
             lines: lines,
-            failureReason: execution.launchError ?? lines.last ?? timeoutReason
+            failureReason: execution.launchError ?? timeoutReason ?? lines.last,
+            persistenceWarning: persistenceWarning
         )
     }
 }

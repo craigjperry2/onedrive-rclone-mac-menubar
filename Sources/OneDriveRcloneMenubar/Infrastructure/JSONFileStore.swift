@@ -34,8 +34,8 @@ struct TranscriptStore: Sendable {
         try? data.write(to: fileURL, options: .atomic)
     }
 
-    func replace(with data: Data) {
-        try? Self.recentData(from: data).write(to: fileURL, options: .atomic)
+    func replace(with data: Data) throws {
+        try Self.recentData(from: data).write(to: fileURL, options: .atomic)
     }
 
     static func displayLines(from data: Data, limit: Int = 30) -> [String] {
