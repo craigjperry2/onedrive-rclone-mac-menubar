@@ -1,0 +1,89 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 77;
+	objects = {
+/* Begin PBXBuildFile section */
+		100000000000000000000001 /* OneDriveRcloneMenubarApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* OneDriveRcloneMenubarApp.swift */; };
+		100000000000000000000002 /* AppPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002 /* AppPaths.swift */; };
+		100000000000000000000003 /* SyncSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000003 /* SyncSettings.swift */; };
+		100000000000000000000004 /* SyncStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000004 /* SyncStatus.swift */; };
+		100000000000000000000005 /* HealthEvaluator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000005 /* HealthEvaluator.swift */; };
+		100000000000000000000006 /* JSONFileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000006 /* JSONFileStore.swift */; };
+		100000000000000000000007 /* RcloneProcessRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000007 /* RcloneProcessRunner.swift */; };
+		100000000000000000000008 /* SyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008 /* SyncCoordinator.swift */; };
+		100000000000000000000009 /* SyncScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* SyncScheduler.swift */; };
+		10000000000000000000000A /* LoginItemManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000A /* LoginItemManager.swift */; };
+		10000000000000000000000B /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000B /* MenuBarView.swift */; };
+		10000000000000000000000C /* AppPathsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000C /* AppPathsTests.swift */; };
+		10000000000000000000000D /* SyncDomainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000D /* SyncDomainTests.swift */; };
+/* End PBXBuildFile section */
+/* Begin PBXContainerItemProxy section */
+		300000000000000000000001 = {isa = PBXContainerItemProxy; containerPortal = 400000000000000000000001 /* Project object */; proxyType = 1; remoteGlobalIDString = 400000000000000000000002; remoteInfo = OneDriveRcloneMenubar; };
+/* End PBXContainerItemProxy section */
+/* Begin PBXFileReference section */
+		200000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneDriveRcloneMenubarApp.swift; sourceTree = "<group>"; };
+		200000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPaths.swift; sourceTree = "<group>"; };
+		200000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncSettings.swift; sourceTree = "<group>"; };
+		200000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncStatus.swift; sourceTree = "<group>"; };
+		200000000000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthEvaluator.swift; sourceTree = "<group>"; };
+		200000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONFileStore.swift; sourceTree = "<group>"; };
+		200000000000000000000007 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RcloneProcessRunner.swift; sourceTree = "<group>"; };
+		200000000000000000000008 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinator.swift; sourceTree = "<group>"; };
+		200000000000000000000009 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncScheduler.swift; sourceTree = "<group>"; };
+		20000000000000000000000A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginItemManager.swift; sourceTree = "<group>"; };
+		20000000000000000000000B = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
+		20000000000000000000000C = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPathsTests.swift; sourceTree = "<group>"; };
+		20000000000000000000000D = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncDomainTests.swift; sourceTree = "<group>"; };
+		20000000000000000000000E = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OneDriveRcloneMenubar.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		20000000000000000000000F = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OneDriveRcloneMenubarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+/* Begin PBXFrameworksBuildPhase section */
+		500000000000000000000001 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		500000000000000000000002 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+/* Begin PBXGroup section */
+		600000000000000000000001 = {isa = PBXGroup; children = (600000000000000000000002, 600000000000000000000008, 600000000000000000000009); sourceTree = "<group>"; };
+		600000000000000000000002 = {isa = PBXGroup; children = (600000000000000000000003); path = Sources; sourceTree = "<group>"; };
+		600000000000000000000003 = {isa = PBXGroup; children = (200000000000000000000001, 600000000000000000000004, 600000000000000000000005, 600000000000000000000006, 600000000000000000000007); path = OneDriveRcloneMenubar; sourceTree = "<group>"; };
+		600000000000000000000004 = {isa = PBXGroup; children = (200000000000000000000002); path = Support; sourceTree = "<group>"; };
+		600000000000000000000005 = {isa = PBXGroup; children = (200000000000000000000003, 200000000000000000000004, 200000000000000000000005); path = Domain; sourceTree = "<group>"; };
+		600000000000000000000006 = {isa = PBXGroup; children = (200000000000000000000006, 200000000000000000000007); path = Infrastructure; sourceTree = "<group>"; };
+		600000000000000000000007 = {isa = PBXGroup; children = (60000000000000000000000A, 60000000000000000000000B, 60000000000000000000000C); path = Features; sourceTree = "<group>"; };
+		60000000000000000000000A = {isa = PBXGroup; children = (200000000000000000000008); path = Sync; sourceTree = "<group>"; };
+		60000000000000000000000B = {isa = PBXGroup; children = (200000000000000000000009, 20000000000000000000000A); path = Lifecycle; sourceTree = "<group>"; };
+		60000000000000000000000C = {isa = PBXGroup; children = (20000000000000000000000B); path = MenuBar; sourceTree = "<group>"; };
+		600000000000000000000008 = {isa = PBXGroup; children = (20000000000000000000000C, 20000000000000000000000D); path = Tests/OneDriveRcloneMenubarTests; sourceTree = "<group>"; };
+		600000000000000000000009 = {isa = PBXGroup; children = (20000000000000000000000E, 20000000000000000000000F); name = Products; sourceTree = "<group>"; };
+/* End PBXGroup section */
+/* Begin PBXNativeTarget section */
+		400000000000000000000002 = {isa = PBXNativeTarget; buildConfigurationList = 700000000000000000000002; buildPhases = (500000000000000000000001, 800000000000000000000001); buildRules = (); dependencies = (); name = OneDriveRcloneMenubar; productName = OneDriveRcloneMenubar; productReference = 20000000000000000000000E; productType = "com.apple.product-type.application"; };
+		400000000000000000000003 = {isa = PBXNativeTarget; buildConfigurationList = 700000000000000000000003; buildPhases = (500000000000000000000002, 800000000000000000000002); buildRules = (); dependencies = (900000000000000000000001); name = OneDriveRcloneMenubarTests; productName = OneDriveRcloneMenubarTests; productReference = 20000000000000000000000F; productType = "com.apple.product-type.bundle.unit-test"; };
+/* End PBXNativeTarget section */
+/* Begin PBXProject section */
+		400000000000000000000001 = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2600; LastUpgradeCheck = 2600; TargetAttributes = {400000000000000000000002 = {CreatedOnToolsVersion = 26.0;}; 400000000000000000000003 = {CreatedOnToolsVersion = 26.0; TestTargetID = 400000000000000000000002;};};}; buildConfigurationList = 700000000000000000000001; compatibilityVersion = "Xcode 16.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = 600000000000000000000001; productRefGroup = 600000000000000000000009; projectDirPath = ""; projectRoot = ""; targets = (400000000000000000000002, 400000000000000000000003); };
+/* End PBXProject section */
+/* Begin PBXSourcesBuildPhase section */
+		800000000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (100000000000000000000001, 100000000000000000000002, 100000000000000000000003, 100000000000000000000004, 100000000000000000000005, 100000000000000000000006, 100000000000000000000007, 100000000000000000000008, 100000000000000000000009, 10000000000000000000000A, 10000000000000000000000B); runOnlyForDeploymentPostprocessing = 0; };
+		800000000000000000000002 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (10000000000000000000000C, 10000000000000000000000D); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+/* Begin PBXTargetDependency section */
+		900000000000000000000001 = {isa = PBXTargetDependency; target = 400000000000000000000002; targetProxy = 300000000000000000000001; };
+/* End PBXTargetDependency section */
+/* Begin XCBuildConfiguration section */
+		A000000000000000000000001 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; SWIFT_VERSION = 6.0;}; name = Debug; };
+		A000000000000000000000002 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_VERSION = 6.0;}; name = Release; };
+		A000000000000000000000003 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; ENABLE_TESTABILITY = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_LSUIElement = YES; MACOSX_DEPLOYMENT_TARGET = 26.0; PRODUCT_BUNDLE_IDENTIFIER = com.craigjperry2.onedrive-rclone-menubar; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SWIFT_EMIT_LOC_STRINGS = YES;}; name = Debug; };
+		A000000000000000000000004 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_LSUIElement = YES; MACOSX_DEPLOYMENT_TARGET = 26.0; PRODUCT_BUNDLE_IDENTIFIER = com.craigjperry2.onedrive-rclone-menubar; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_EMIT_LOC_STRINGS = YES;}; name = Release; };
+		A000000000000000000000005 = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 26.0; PRODUCT_BUNDLE_IDENTIFIER = com.craigjperry2.onedrive-rclone-menubar.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SWIFT_EMIT_LOC_STRINGS = NO; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OneDriveRcloneMenubar.app/Contents/MacOS/OneDriveRcloneMenubar";}; name = Debug; };
+		A000000000000000000000006 = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 26.0; PRODUCT_BUNDLE_IDENTIFIER = com.craigjperry2.onedrive-rclone-menubar.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_EMIT_LOC_STRINGS = NO; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OneDriveRcloneMenubar.app/Contents/MacOS/OneDriveRcloneMenubar";}; name = Release; };
+/* End XCBuildConfiguration section */
+/* Begin XCConfigurationList section */
+		700000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (A000000000000000000000001, A000000000000000000000002); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		700000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (A000000000000000000000003, A000000000000000000000004); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		700000000000000000000003 = {isa = XCConfigurationList; buildConfigurations = (A000000000000000000000005, A000000000000000000000006); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = 400000000000000000000001;
+}

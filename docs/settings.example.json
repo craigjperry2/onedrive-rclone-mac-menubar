@@ -1,0 +1,7 @@
+{
+  "rcloneExecutablePath": "/absolute/path/to/rclone",
+  "configPath": "/absolute/path/to/rclone.conf",
+  "remoteName": "onedrive",
+  "localPath": "/absolute/path/to/local-mirror",
+  "intervalSeconds": 600
+}
