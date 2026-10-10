@@ -138,6 +138,18 @@ struct SyncDomainTests {
         #expect(result.failureReason?.isEmpty == false)
     }
 
+    @Test func runnerCreatesMissingTranscriptDirectories() async {
+        let subFolder = FileManager.default.temporaryDirectory.appending(path: "nested-dir-\(UUID().uuidString)")
+        let transcript = subFolder.appending(path: "latest-run.log")
+        defer { try? FileManager.default.removeItem(at: subFolder) }
+
+        let settings = SyncSettings(rcloneExecutablePath: "/does/not/exist/rclone", configPath: "/tmp/test-rclone.conf", remoteName: "onedrive", localPath: "/tmp/local", intervalSeconds: 600)
+
+        _ = await RcloneProcessRunner().run(.sync, settings: settings, transcriptURL: transcript)
+
+        #expect(FileManager.default.fileExists(atPath: transcript.path()))
+    }
+
     @Test func systemWakeTimeNeverFallsAfterNow() {
         let now = Date()
         #expect(SystemWakeTime.current(now: now) <= now)

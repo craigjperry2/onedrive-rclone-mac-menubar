@@ -40,6 +40,8 @@ actor RcloneProcessRunner {
         process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, replacement in replacement }
 
         if let transcriptURL {
+            let directoryURL = transcriptURL.deletingLastPathComponent()
+            try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
             FileManager.default.createFile(atPath: transcriptURL.path(), contents: nil)
             guard let transcriptHandle = try? FileHandle(forWritingTo: transcriptURL) else {
                 return Result(exitCode: -1, lines: [], failureReason: "Unable to create the rclone output log.", persistenceWarning: nil)
