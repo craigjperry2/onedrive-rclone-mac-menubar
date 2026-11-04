@@ -24,3 +24,5 @@ Use **Sync Now** for an ordinary immediate run. Use **Resync** only for initiali
 ## Development
 
 Run `swift test` to execute the state, storage, and transcript tests.
+
+To exercise real syncs without OneDrive, run `scripts/setup-fake-onedrive.sh` on a test machine. It configures the app against a fake OneDrive made of local directories; see [docs/testing-with-fake-onedrive.md](docs/testing-with-fake-onedrive.md).

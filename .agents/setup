@@ -29,8 +29,10 @@ $begin_marker
 - Build the app bundle: \`xcodebuild -project OneDriveRcloneMenubar.xcodeproj -scheme OneDriveRcloneMenubar -configuration Debug -derivedDataPath .build/xcode CODE_SIGNING_ALLOWED=NO build\`
 - Run the tests: \`swift test\`
 - Run the app: \`open .build/xcode/Build/Products/Debug/OneDriveRcloneMenubar.app\`. It is an agent app (\`LSUIElement\`), so it has no Dock icon or window; its status item appears at the right of the menu bar 5 to 15 seconds after launch, so wait or retry the screenshot before concluding it failed. With no rclone configured it shows the \`pause.circle\` (Disabled) icon.
-- Screenshot with \`screencapture -x /tmp/shot.png\` and fetch it with \`mac_read_file\`. The display is 1280x800 points at 2x, so crop the menu bar with \`screencapture -x -R 600,0,680,30 /tmp/menubar.png\`.
-- Synthetic clicks (for example \`cliclick\` from Homebrew) move the pointer but do not open the status item's menu, because the shell has no Accessibility permission. Ask the user to open the menu from the thread's Mac tab when its contents need checking.
+- Screenshot with \`screencapture -x /private/tmp/shot-1.png\` and fetch it with \`mac_read_file\`. The display is 1280x800 points at 2x, so crop the menu bar with \`screencapture -x -R 600,0,680,30 /private/tmp/menubar-1.png\`.
+- To test syncing, run \`brew install rclone\` and then \`scripts/setup-fake-onedrive.sh\` on the Satellite. It configures the app against a fake OneDrive, which is an rclone alias remote over a local directory, synced with a second local directory. Then launch the app, choose Resync… and confirm it once, and choose Sync Now. \`docs/testing-with-fake-onedrive.md\` has the details.
+- Synthetic clicks work: \`brew install cliclick\`, then \`cliclick c:1038,13\` opens the status item's menu, and clicking the icon again closes it. Coordinates are in points; screenshots shown to agents are downscaled, so take coordinates from \`-R\` region captures, in which each pixel is half a point. Do not use osascript System Events UI scripting, because it hangs. \`docs/testing-with-fake-onedrive.md\` lists the other pitfalls.
+- \`mac_read_file\` sometimes reports a file that was just written as missing, and returns an earlier image when a path is reused. Use a new name under \`/private/tmp\` for each screenshot, and retry the read once.
 - Never point the app at real OneDrive data or rclone credentials from an orb or satellite.
 $end_marker
 EOF
