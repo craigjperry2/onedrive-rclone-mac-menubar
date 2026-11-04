@@ -1,0 +1,23 @@
+name: PR title
+
+# Squash merges use the pull request title as the commit subject, and
+# scripts/next-version.sh reads those subjects: feat (or any "!") bumps minor,
+# everything else bumps patch.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  conventional-title:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          pattern='^(feat|fix|perf|refactor|docs|test|build|ci|chore|revert|style)(\([^)]+\))?!?: .+'
+          if [[ ! "$TITLE" =~ $pattern ]]; then
+            echo "::error::Start the PR title with a conventional-commit type, such as \"feat: ...\", \"fix(sync): ...\" or \"chore!: ...\"."
+            exit 1
+          fi

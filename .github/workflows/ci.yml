@@ -1,0 +1,126 @@
+name: CI
+
+# Pull requests run the checks. A push to main, which the main ruleset only
+# allows through a merged pull request, runs the checks and then publishes an
+# immutable GitHub release.
+on:
+  pull_request:
+  push:
+    branches: [main]
+    # Docs-only merges don't publish; their commits join the next release.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+
+permissions:
+  contents: read
+
+# Main runs one at a time and never cancel each other. If several merges queue
+# up, only the newest waits; its release includes the skipped merges' commits.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  version-logic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: scripts/test-next-version.sh
+
+  test:
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: swift test
+      - name: Build the app bundle
+        run: >-
+          xcodebuild -project OneDriveRcloneMenubar.xcodeproj -scheme OneDriveRcloneMenubar
+          -configuration Release -derivedDataPath .build/xcode CODE_SIGNING_ALLOWED=NO build
+
+  release:
+    needs: [version-logic, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: xcode-27
+    environment: release
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Choose the version
+        id: version
+        run: |
+          released="$(git tag --points-at "$GITHUB_SHA" --list 'v*' | sed -n 1p)"
+          if [[ -n "$released" ]]; then
+            echo "::notice::$GITHUB_SHA is already released as $released."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$(scripts/next-version.sh)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and zip the app
+        id: build
+        if: steps.version.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: echo "hash=$(scripts/build-release.sh "$VERSION" "$GITHUB_RUN_NUMBER" | tail -n 1)" >> "$GITHUB_OUTPUT"
+
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+        if: steps.version.outputs.skip != 'true'
+
+      - name: Check the Nix package installs the zip
+        if: steps.version.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          HASH: ${{ steps.build.outputs.hash }}
+        run: scripts/check-nix-package.sh "$VERSION" "$HASH"
+
+      - name: Publish the release
+        if: steps.version.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          HASH: ${{ steps.build.outputs.hash }}
+        run: |
+          tag="v$VERSION"
+          cat > notes.md <<EOF
+          ## Install with nix-darwin
+
+          With this repository's \`darwinModules.default\` imported (see the README), set:
+
+          \`\`\`nix
+          programs.onedrive-rclone-menubar = {
+            enable = true;
+            version = "$VERSION";
+            hash = "$HASH";
+          };
+          \`\`\`
+
+          Then run \`darwin-rebuild switch\` and quit and relaunch the app. Its menu shows **Version $VERSION ($GITHUB_RUN_NUMBER)**.
+
+          Check the zip against GitHub's release attestation with \`gh release verify-asset $tag OneDriveRcloneMenubar-$VERSION.zip\`.
+          EOF
+
+          # A draft left behind by a failed run is still mutable; replace it.
+          if [[ "$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)" == "true" ]]; then
+            gh release delete "$tag" --yes
+          fi
+
+          # With release immutability on, assets must be attached before the
+          # draft is published; publishing creates and locks the tag.
+          gh release create "$tag" dist/* --draft --target "$GITHUB_SHA" --title "$tag" \
+            --notes-file notes.md --generate-notes
+          gh release edit "$tag" --draft=false --latest
+
+          # Fails when release immutability is off, because only immutable
+          # releases get an attestation. Allow a moment for it to appear.
+          for attempt in 1 2 3 4 5 6; do
+            if gh release verify "$tag"; then exit 0; fi
+            sleep $((attempt * 5))
+          done
+          echo "::error::$tag has no valid release attestation. Is release immutability enabled?"
+          exit 1
