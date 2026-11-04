@@ -28,6 +28,7 @@ struct MenuBarView: View {
             Button("Sync Now", action: coordinator.syncNow).disabled(!coordinator.canStartSync)
             Button("Resync…", action: confirmResync).disabled(!coordinator.canStartSync)
             Divider()
+            Text(versionTitle)
             Button("Quit OneDrive Sync") { NSApplication.shared.terminate(nil) }
                 .disabled(coordinator.isRunning)
         }
@@ -44,6 +45,17 @@ struct MenuBarView: View {
         alert.addButton(withTitle: "Cancel")
         NSApp.activate()
         if alert.runModal() == .alertFirstButtonReturn { coordinator.resync() }
+    }
+
+    // Release builds get MARKETING_VERSION and CURRENT_PROJECT_VERSION from CI;
+    // the project's 0.0.0 default and `swift run` (no bundle) mark local builds.
+    private var versionTitle: String {
+        let info = Bundle.main.infoDictionary
+        guard let version = info?["CFBundleShortVersionString"] as? String, version != "0.0.0" else {
+            return "Development build"
+        }
+        guard let build = info?["CFBundleVersion"] as? String, build != version else { return "Version \(version)" }
+        return "Version \(version) (\(build))"
     }
 
     private var latestRunTitle: String {
