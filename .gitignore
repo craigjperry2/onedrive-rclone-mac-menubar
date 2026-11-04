@@ -63,3 +63,4 @@ fastlane/test_output
 
 # Compound Engineering machine-local configuration
 .compound-engineering/*.local.yaml
+.amp/portals/*

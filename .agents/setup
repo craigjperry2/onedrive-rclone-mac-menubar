@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Orb setup for OneDriveRcloneMenubar.
+#
+# This is a macOS 26 SwiftUI/AppKit menu-bar app. The Linux orb cannot compile
+# it, so there is no toolchain to install here. Builds, tests, and runs happen on
+# the thread's macOS Satellite. Setup only records that workflow for agents.
+set -euo pipefail
+
+guidance_file="$HOME/.config/amp/AGENTS.md"
+begin_marker="<!-- onedrive-rclone-mac-menubar orb guidance: begin -->"
+end_marker="<!-- onedrive-rclone-mac-menubar orb guidance: end -->"
+
+mkdir -p "$(dirname "$guidance_file")"
+touch "$guidance_file"
+
+# Drop any previous copy of this block so reruns converge on the current text.
+tmp="$(mktemp)"
+awk -v b="$begin_marker" -v e="$end_marker" '
+  $0 == b { skip = 1; next }
+  $0 == e { skip = 0; next }
+  !skip
+' "$guidance_file" > "$tmp"
+
+cat >> "$tmp" <<EOF
+$begin_marker
+# OneDriveRcloneMenubar in an orb
+
+- This is a macOS-only SwiftUI app. The Linux orb cannot build or test it; run all Swift and Xcode commands on the macOS Satellite (\`mac_sidecar start\`, then \`mac_shell\`). The default \`macos-27\` image (Xcode 27.2) builds it.
+- Build the app bundle: \`xcodebuild -project OneDriveRcloneMenubar.xcodeproj -scheme OneDriveRcloneMenubar -configuration Debug -derivedDataPath .build/xcode CODE_SIGNING_ALLOWED=NO build\`
+- Run the tests: \`swift test\`
+- Run the app: \`open .build/xcode/Build/Products/Debug/OneDriveRcloneMenubar.app\`. It is an agent app (\`LSUIElement\`), so it has no Dock icon or window; its status item appears at the right of the menu bar 5 to 15 seconds after launch, so wait or retry the screenshot before concluding it failed. With no rclone configured it shows the \`pause.circle\` (Disabled) icon.
+- Screenshot with \`screencapture -x /tmp/shot.png\` and fetch it with \`mac_read_file\`. The display is 1280x800 points at 2x, so crop the menu bar with \`screencapture -x -R 600,0,680,30 /tmp/menubar.png\`.
+- Synthetic clicks (for example \`cliclick\` from Homebrew) move the pointer but do not open the status item's menu, because the shell has no Accessibility permission. Ask the user to open the menu from the thread's Mac tab when its contents need checking.
+- Never point the app at real OneDrive data or rclone credentials from an orb or satellite.
+$end_marker
+EOF
+
+mv "$tmp" "$guidance_file"
+echo "Wrote orb guidance to $guidance_file"

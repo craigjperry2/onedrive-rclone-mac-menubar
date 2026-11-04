@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Nothing to reconnect: the orb runs no services for this macOS-only app, and the
+# macOS Satellite is started on demand by the agent.
+set -euo pipefail
