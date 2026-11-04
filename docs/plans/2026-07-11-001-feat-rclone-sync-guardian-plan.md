@@ -13,6 +13,13 @@ deepened: 2026-07-11
 
 # Rclone Sync Guardian - Plan
 
+> **Status: v1 implemented and superseded.** This plan describes the owner-only v1, which shipped in [PR #9](https://github.com/craigjperry2/onedrive-rclone-mac-menubar/pull/9). The product is now a consumer app, so the v1 stop conditions and scope boundaries below (no OAuth setup, no settings UI, no history beyond the latest run, owner-managed credentials) no longer apply. The roadmap lives in the GitHub issues:
+>
+> - Remaining v1 gaps: [#11](https://github.com/craigjperry2/onedrive-rclone-mac-menubar/issues/11), [#12](https://github.com/craigjperry2/onedrive-rclone-mac-menubar/issues/12), [#13](https://github.com/craigjperry2/onedrive-rclone-mac-menubar/issues/13).
+> - Consumer roadmap: [#3](https://github.com/craigjperry2/onedrive-rclone-mac-menubar/issues/3), [#5](https://github.com/craigjperry2/onedrive-rclone-mac-menubar/issues/5), [#4](https://github.com/craigjperry2/onedrive-rclone-mac-menubar/issues/4), [#6](https://github.com/craigjperry2/onedrive-rclone-mac-menubar/issues/6), [#7](https://github.com/craigjperry2/onedrive-rclone-mac-menubar/issues/7).
+>
+> Keep this file as a record of the v1 design decisions; do not treat it as the current scope.
+
 ## Goal Capsule
 
 - **Objective:** Replace the hidden OneDrive rclone launch-agent workflow with a macOS 26 menu-bar app that makes sync health and recovery actions visible.
