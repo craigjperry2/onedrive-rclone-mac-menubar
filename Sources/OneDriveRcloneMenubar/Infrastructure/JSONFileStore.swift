@@ -27,7 +27,7 @@ struct TranscriptStore: Sendable {
     }
 
     func trimToRecentBytes(limit: Int = maximumStoredBytes) {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path()),
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path(percentEncoded: false)),
               let size = attributes[.size] as? NSNumber,
               size.intValue > limit,
               let data = recentFileData(limit: limit) else { return }

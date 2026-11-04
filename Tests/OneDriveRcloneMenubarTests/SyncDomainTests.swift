@@ -69,10 +69,12 @@ struct SyncDomainTests {
         printf 'config=%s\\n' "$RCLONE_CONFIG"
         printf 'arg=%s\\n' "$@"
         """)
-        let transcript = FileManager.default.temporaryDirectory.appending(path: "onedrive-rclone-runner-\(UUID().uuidString).log")
+        // A space in the directory, as in "Application Support", must not break transcript creation.
+        let transcriptDirectory = FileManager.default.temporaryDirectory.appending(path: "onedrive rclone runner \(UUID().uuidString)")
+        let transcript = transcriptDirectory.appending(path: "latest-run.log")
         defer {
             try? FileManager.default.removeItem(at: script)
-            try? FileManager.default.removeItem(at: transcript)
+            try? FileManager.default.removeItem(at: transcriptDirectory)
         }
         let settings = SyncSettings(rcloneExecutablePath: script.path(), configPath: "/tmp/test-rclone.conf", remoteName: "onedrive", localPath: "/tmp/local mirror", intervalSeconds: 600)
 
