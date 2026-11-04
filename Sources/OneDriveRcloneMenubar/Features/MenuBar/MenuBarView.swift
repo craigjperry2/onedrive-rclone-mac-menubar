@@ -2,7 +2,6 @@ import SwiftUI
 
 struct MenuBarView: View {
     @ObservedObject var coordinator: SyncCoordinator
-    @State private var showingResyncConfirmation = false
 
     var body: some View {
         Group {
@@ -27,17 +26,24 @@ struct MenuBarView: View {
 
             Divider()
             Button("Sync Now", action: coordinator.syncNow).disabled(!coordinator.canStartSync)
-            Button("Resync…") { showingResyncConfirmation = true }.disabled(!coordinator.canStartSync)
+            Button("Resync…", action: confirmResync).disabled(!coordinator.canStartSync)
             Divider()
             Button("Quit OneDrive Sync") { NSApplication.shared.terminate(nil) }
                 .disabled(coordinator.isRunning)
         }
-        .confirmationDialog("Run recovery resync?", isPresented: $showingResyncConfirmation, titleVisibility: .visible) {
-            Button("Resync", role: .destructive, action: coordinator.resync)
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Resync can overwrite files. Use it only to initialize or recover rclone bisync.")
-        }
+    }
+
+    // An NSAlert rather than .confirmationDialog: the menu closes before the
+    // action runs, so a dialog attached to the menu content is never presented.
+    private func confirmResync() {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Run recovery resync?"
+        alert.informativeText = "Resync can overwrite files. Use it only to initialize or recover rclone bisync."
+        alert.addButton(withTitle: "Resync").hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate()
+        if alert.runModal() == .alertFirstButtonReturn { coordinator.resync() }
     }
 
     private var latestRunTitle: String {
