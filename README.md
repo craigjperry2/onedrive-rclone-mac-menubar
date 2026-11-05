@@ -2,7 +2,7 @@
 
 A macOS 26 SwiftUI menu-bar app for a locally configured OneDrive `rclone bisync` mirror.
 
-It runs a normal sync every ten minutes, shows whether the latest run is healthy, and keeps the final 30 lines of the latest run available from the menu. It does not create OneDrive credentials or edit `rclone.conf`.
+It runs a normal sync every ten minutes, shows whether the latest run is healthy, and keeps the final 30 lines of the latest run available from the menu. Only one rclone process runs at a time. Scheduled syncs are skipped while the Mac is on a Low Data Mode or metered network, such as a phone hotspot, and resume on a normal network; **Sync Now** always runs. Each run and each skipped scheduled sync is recorded with its reason in Application Support `activity.json`. It does not create OneDrive credentials or edit `rclone.conf`.
 
 ## Setup
 
