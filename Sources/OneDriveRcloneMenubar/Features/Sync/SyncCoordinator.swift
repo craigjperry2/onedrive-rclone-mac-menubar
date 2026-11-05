@@ -17,6 +17,8 @@ final class SyncCoordinator: ObservableObject {
     private let healthScheduler = SyncScheduler()
     private var settings: SyncSettings?
     private var remoteValidationError: String?
+    private var validatedConfiguration: ConfigurationSnapshot?
+    private var scheduledInterval: TimeInterval?
     private var awakeSince: Date
     private var running = false
     private var didLoad = false
@@ -31,6 +33,10 @@ final class SyncCoordinator: ObservableObject {
         NotificationCenter.default.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.noteWake() }
         }
+        // Opening the status menu picks up configuration fixed while the app runs.
+        NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in await self?.reloadConfiguration() }
+        }
     }
 
     func load() {
@@ -38,17 +44,16 @@ final class SyncCoordinator: ObservableObject {
         didLoad = true
         do {
             try paths.createDirectories()
-            if let saved = try settingsStore.load() { settings = saved } else {
-                try settingsStore.save(.initialTemplate)
-                settings = .initialTemplate
-            }
+            if try settingsStore.load() == nil { try settingsStore.save(.initialTemplate) }
             latestRun = try runStateStore.load()
             transcriptLines = transcriptStore.displayLines()
-            refreshStatus()
-            Task { await validateConfiguration() }
             loginWarning = LoginItemManager.register()
         } catch {
             status = .disabled(reason: error.localizedDescription)
+        }
+        Task { await reloadConfiguration() }
+        healthScheduler.start(interval: 60) { [weak self] in
+            Task { await self?.reloadConfiguration() }
         }
     }
 
@@ -79,18 +84,53 @@ final class SyncCoordinator: ObservableObject {
         }
     }
 
-    private func validateConfiguration() async {
-        guard let settings else { return }
-        let validation = await runner.validate(settings)
-        if let validation {
-            remoteValidationError = validation
-            status = .disabled(reason: validation)
+    /// Rereads settings.json and revalidates the rclone configuration, so fixing
+    /// either while the app runs enables syncing, and breaking either disables it.
+    /// rclone is asked again only when the settings or the rclone config file changed
+    /// since the last successful validation.
+    func reloadConfiguration() async {
+        guard !running else { return }
+        do {
+            settings = try settingsStore.load()
+        } catch {
+            settings = nil
+            validatedConfiguration = nil
+            stopScheduledSyncs()
+            status = .disabled(reason: "settings.json could not be read: \(error.localizedDescription)")
             return
         }
-        remoteValidationError = nil
+        guard let settings else {
+            validatedConfiguration = nil
+            stopScheduledSyncs()
+            refreshStatus()
+            return
+        }
+        let snapshot = ConfigurationSnapshot(settings: settings)
+        if snapshot != validatedConfiguration {
+            let validation = await runner.validate(settings)
+            // A newer reload or a run may have replaced the settings while rclone ran.
+            guard !running, self.settings == settings else { return }
+            applyValidation(validation, snapshot: snapshot)
+        }
         refreshStatus()
+    }
+
+    private func applyValidation(_ validation: String?, snapshot: ConfigurationSnapshot?) {
+        remoteValidationError = validation
+        guard validation == nil, let settings else {
+            validatedConfiguration = nil
+            stopScheduledSyncs()
+            return
+        }
+        validatedConfiguration = snapshot
+        guard scheduledInterval != settings.intervalSeconds else { return }
+        scheduledInterval = settings.intervalSeconds
         scheduler.start(interval: settings.intervalSeconds) { [weak self] in self?.syncNow() }
-        healthScheduler.start(interval: 60) { [weak self] in self?.refreshStatus() }
+    }
+
+    private func stopScheduledSyncs() {
+        scheduler.stop()
+        scheduledInterval = nil
     }
 
     private func start(_ kind: RcloneProcessRunner.RunKind) async {
@@ -104,11 +144,11 @@ final class SyncCoordinator: ObservableObject {
         }
         if let validation = await runner.validate(settings) {
             running = false
-            remoteValidationError = validation
+            applyValidation(validation, snapshot: nil)
             status = .disabled(reason: validation)
             return
         }
-        remoteValidationError = nil
+        applyValidation(nil, snapshot: ConfigurationSnapshot(settings: settings))
         let startedAt = Date()
         let result = await runner.run(kind, settings: settings, transcriptURL: paths.latestTranscriptFile)
         let finishedAt = Date()
@@ -168,6 +208,18 @@ final class SyncCoordinator: ObservableObject {
             now: now,
             awakeSince: awakeSince
         )
+    }
+}
+
+/// The inputs that rclone validation depends on. The config file's modification
+/// date stands in for its contents, so editing rclone.conf triggers revalidation.
+private struct ConfigurationSnapshot: Equatable {
+    let settings: SyncSettings
+    let configModified: Date?
+
+    init(settings: SyncSettings) {
+        self.settings = settings
+        configModified = (try? FileManager.default.attributesOfItem(atPath: settings.configPath))?[.modificationDate] as? Date
     }
 }
 
