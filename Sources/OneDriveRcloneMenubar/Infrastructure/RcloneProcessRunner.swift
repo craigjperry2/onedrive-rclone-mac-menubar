@@ -25,7 +25,9 @@ actor RcloneProcessRunner: RcloneRunning {
         if let error = settings.configurationError() { return error }
         let result = await runProcess(executable: settings.rcloneExecutablePath, arguments: ["listremotes"], environment: ["RCLONE_CONFIG": settings.configPath], transcriptURL: nil)
         guard result.exitCode == 0 else { return "Unable to read the rclone configuration." }
-        return result.lines.contains("\(settings.remoteName):") ? nil : "The configured OneDrive remote was not found."
+        return result.lines.contains("\(settings.remoteName):")
+            ? nil
+            : "This Mac is ready to configure OneDrive sync.\nrclone has no remote named \"\(settings.remoteName)\" yet."
     }
 
     func run(_ kind: RunKind, settings: SyncSettings, transcriptURL: URL) async -> Result {

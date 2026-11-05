@@ -1,4 +1,5 @@
 import Foundation
+import ServiceManagement
 import Testing
 @testable import OneDriveRcloneMenubar
 
@@ -46,7 +47,39 @@ struct SyncDomainTests {
     }
 
     @Test func blankExecutableLeavesSettingsDisabled() {
-        #expect(SyncSettings.initialTemplate.configurationError() == "Set rcloneExecutablePath in settings.json.")
+        #expect(SyncSettings.initialTemplate.configurationError() == SyncSettings.rcloneRequired)
+    }
+
+    @Test func rcloneResolvesFromSettingsThenFirstExecutableCandidate() {
+        var settings = SyncSettings.initialTemplate
+        let candidates = ["/does/not/exist/rclone", "/bin/sh", "/bin/zsh"]
+
+        #expect(settings.resolvingRclone(candidates: candidates).rcloneExecutablePath == "/bin/sh")
+        #expect(settings.resolvingRclone(candidates: ["/does/not/exist/rclone"]).configurationError() == SyncSettings.rcloneRequired)
+
+        settings.rcloneExecutablePath = "/bin/zsh"
+        #expect(settings.resolvingRclone(candidates: candidates).rcloneExecutablePath == "/bin/zsh")
+
+        // A stale explicit path, such as a garbage-collected Nix store path, falls back to detection.
+        settings.rcloneExecutablePath = "/nix/store/gone-rclone/bin/rclone"
+        #expect(settings.resolvingRclone(candidates: candidates).rcloneExecutablePath == "/bin/sh")
+    }
+
+    @Test func rcloneCandidatesCoverHomebrewNixAndPath() {
+        let candidates = SyncSettings.rcloneCandidates(home: "/Users/alex", user: "alex", environment: ["PATH": "/usr/bin:/custom/bin"])
+
+        #expect(Array(candidates.prefix(2)) == ["/opt/homebrew/bin/rclone", "/usr/local/bin/rclone"])
+        #expect(candidates.contains("/Users/alex/.nix-profile/bin/rclone"))
+        #expect(candidates.contains("/etc/profiles/per-user/alex/bin/rclone"))
+        #expect(candidates.contains("/run/current-system/sw/bin/rclone"))
+        #expect(Array(candidates.suffix(2)) == ["/usr/bin/rclone", "/custom/bin/rclone"])
+    }
+
+    @Test func loginItemWarningExplainsEveryStateExceptEnabled() {
+        #expect(LoginItemManager.warning(for: .enabled) == nil)
+        #expect(LoginItemManager.warning(for: .requiresApproval)?.contains("Login Items") == true)
+        #expect(LoginItemManager.warning(for: .notRegistered)?.contains("Login Items") == true)
+        #expect(LoginItemManager.warning(for: .notFound)?.contains("Login Items") == true)
     }
 
     @Test func externalVolumeAvailabilityIsNotAConfigurationError() {

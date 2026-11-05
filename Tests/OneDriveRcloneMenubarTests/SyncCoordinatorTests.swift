@@ -87,7 +87,7 @@ struct SyncCoordinatorTests {
 
         let saved = try JSONFileStore<SyncSettings>(fileURL: harness.paths.settingsFile).load()
         #expect(saved == .initialTemplate)
-        #expect(harness.coordinator.status == .disabled(reason: "Set rcloneExecutablePath in settings.json."))
+        #expect(harness.coordinator.status == .disabled(reason: SyncSettings.rcloneRequired))
         #expect(!harness.scheduler.isStarted)
     }
 
@@ -124,6 +124,36 @@ struct SyncCoordinatorTests {
         #expect(await harness.runner.runs.isEmpty)
     }
 
+    @Test func rcloneIsFoundWithoutAPathInSettings() async throws {
+        let harness = try Harness()
+        var settings = harness.settings
+        settings.rcloneExecutablePath = ""
+        try JSONFileStore<SyncSettings>(fileURL: harness.paths.settingsFile).save(settings)
+        harness.rcloneCandidates = ["/does/not/exist/rclone", "/bin/sh", "/bin/zsh"]
+        let coordinator = harness.makeCoordinator()
+
+        await coordinator.load()
+        await coordinator.run(.sync)
+
+        #expect(coordinator.status == .healthy(lastSuccess: harness.clock.now))
+        // Validation at load, then validation and the run itself.
+        #expect(await harness.runner.rcloneExecutablePaths == ["/bin/sh", "/bin/sh", "/bin/sh"])
+    }
+
+    @Test func loginItemWarningIsRegisteredOnceAndStaysCurrent() async throws {
+        let harness = try Harness()
+        harness.loginItem.currentWarning = "Allow it in Login Items."
+        await harness.coordinator.load()
+        #expect(harness.loginItem.registrations == 1)
+        #expect(harness.coordinator.loginWarning == "Allow it in Login Items.")
+
+        harness.loginItem.currentWarning = nil
+        await harness.checkScheduler.fire()
+
+        #expect(harness.coordinator.loginWarning == nil)
+        #expect(harness.loginItem.registrations == 1)
+    }
+
     @Test func wakeRestartsTheFirstSyncGracePeriod() async throws {
         let harness = try Harness(awakeFor: 30 * 60)
         await harness.coordinator.load()
@@ -144,6 +174,8 @@ private final class Harness {
     let checkScheduler = ManualScheduler()
     let wakeNotifications = NotificationCenter()
     let clock = TestClock()
+    let loginItem = FakeLoginItem()
+    var rcloneCandidates: [String] = []
     let awakeSince: Date
     private(set) var coordinator: SyncCoordinator!
 
@@ -167,11 +199,21 @@ private final class Harness {
             scheduler: scheduler,
             checkScheduler: checkScheduler,
             wakeNotifications: wakeNotifications,
-            registerLoginItem: { nil },
+            loginItem: loginItem,
+            rcloneCandidates: rcloneCandidates,
             now: { [clock] in clock.now },
             awakeSince: awakeSince
         )
     }
+}
+
+@MainActor
+private final class FakeLoginItem: LoginItemControlling {
+    var currentWarning: String?
+    private(set) var registrations = 0
+
+    func registerIfNeeded() { registrations += 1 }
+    func warning() -> String? { currentWarning }
 }
 
 @MainActor
@@ -192,6 +234,8 @@ private final class ManualScheduler: RepeatingScheduler {
 
 private actor FakeRcloneRunner: RcloneRunning {
     private(set) var runs: [RcloneProcessRunner.RunKind] = []
+    /// The rclone executable of every validation and run, in order.
+    private(set) var rcloneExecutablePaths: [String] = []
     private var validationError: String?
     private var exitCode: Int32 = 0
     private var lastLine: String?
@@ -212,10 +256,14 @@ private actor FakeRcloneRunner: RcloneRunning {
     }
 
     // Like the real runner, an incomplete settings file fails before rclone is asked.
-    func validate(_ settings: SyncSettings) async -> String? { settings.configurationError() ?? validationError }
+    func validate(_ settings: SyncSettings) async -> String? {
+        rcloneExecutablePaths.append(settings.rcloneExecutablePath)
+        return settings.configurationError() ?? validationError
+    }
 
     func run(_ kind: RcloneProcessRunner.RunKind, settings: SyncSettings, transcriptURL: URL) async -> RcloneProcessRunner.Result {
         runs.append(kind)
+        rcloneExecutablePaths.append(settings.rcloneExecutablePath)
         runWaiters.filter { $0.count <= runs.count }.forEach { $0.continuation.resume() }
         runWaiters.removeAll { $0.count <= runs.count }
         if holdNext {
