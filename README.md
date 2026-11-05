@@ -6,12 +6,12 @@ It runs a normal sync every ten minutes, shows whether the latest run is healthy
 
 ## Setup
 
-1. Install rclone and complete OneDrive setup outside this app.
-2. Install the app with nix-darwin (below), or open `OneDriveRcloneMenubar.xcodeproj` in Xcode and run the `OneDriveRcloneMenubar` scheme. The app bundle is an agent application, so it lives in the menu bar rather than the Dock and can register itself as a login item. `swift run` remains useful for quick development checks, but does not provide the app-bundle behavior.
-3. Edit the generated Application Support `settings.json` file with the absolute rclone executable path, rclone config path, OneDrive remote name, and local mirror path. The current Nix-installed rclone binary is the value to use for `rcloneExecutablePath` on this host.
-4. Let macOS approve launch at login if prompted.
+1. Install rclone, for example with `brew install rclone` or from Nix, and complete OneDrive setup in rclone outside this app.
+2. Install the app with nix-darwin (below), or open `OneDriveRcloneMenubar.xcodeproj` in Xcode and run the `OneDriveRcloneMenubar` scheme. The app bundle is an agent application, so it lives in the menu bar rather than the Dock and registers itself as a login item. `swift run` remains useful for quick development checks, but does not provide the app-bundle behavior.
+3. Edit the generated Application Support `settings.json` file with the rclone config path, OneDrive remote name, and local mirror path (see [docs/settings.example.json](docs/settings.example.json)). Leave `rcloneExecutablePath` empty: the app finds rclone in `/opt/homebrew/bin`, `/usr/local/bin`, `~/.nix-profile/bin`, `/etc/profiles/per-user/$USER/bin`, `/run/current-system/sw/bin`, and its `PATH`. Set it only to use a different rclone; if that path stops working, for example after a Nix garbage collection, the app falls back to the locations above.
+4. If macOS asks you to approve launch at login, or you turn it off later, the menu says the app will not start at login. Choose **Open Login Items Settings…** to allow it.
 
-The app remains disabled and explains why until the executable, configuration file, and remote are valid.
+Until rclone, its configuration file, and the remote are usable, the app stays disabled and its menu explains why: that rclone needs installing, or that the Mac is ready but OneDrive is not configured yet. Changes to `settings.json` or `rclone.conf` take effect within a minute, or as soon as you open the menu.
 
 ## Installing with nix-darwin
 

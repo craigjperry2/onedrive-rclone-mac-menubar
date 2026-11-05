@@ -15,7 +15,8 @@ final class SyncCoordinator: ObservableObject {
     private let evaluator = HealthEvaluator()
     private let scheduler: any RepeatingScheduler
     private let checkScheduler: any RepeatingScheduler
-    private let registerLoginItem: @MainActor () -> String?
+    private let loginItem: any LoginItemControlling
+    private let rcloneCandidates: [String]
     private let now: @MainActor () -> Date
     private var settings: SyncSettings?
     private var remoteValidationError: String?
@@ -30,7 +31,7 @@ final class SyncCoordinator: ObservableObject {
     private var transcriptStore: TranscriptStore { TranscriptStore(fileURL: paths.latestTranscriptFile) }
 
     /// The defaults are the real dependencies; tests pass fakes so that no rclone
-    /// process, timer, login item, or wall-clock time is involved.
+    /// process, timer, login item, rclone installation, or wall-clock time is involved.
     init(
         paths: AppPaths = AppPaths(),
         runner: any RcloneRunning = RcloneProcessRunner(),
@@ -38,7 +39,8 @@ final class SyncCoordinator: ObservableObject {
         checkScheduler: any RepeatingScheduler = SyncScheduler(),
         // NSWorkspace posts wake notifications on its own center, not the default one.
         wakeNotifications: NotificationCenter = NSWorkspace.shared.notificationCenter,
-        registerLoginItem: @escaping @MainActor () -> String? = LoginItemManager.register,
+        loginItem: any LoginItemControlling = LoginItemManager(),
+        rcloneCandidates: [String] = SyncSettings.rcloneCandidates(),
         now: @escaping @MainActor () -> Date = Date.init,
         awakeSince: Date = SystemWakeTime.current()
     ) {
@@ -46,13 +48,15 @@ final class SyncCoordinator: ObservableObject {
         self.runner = runner
         self.scheduler = scheduler
         self.checkScheduler = checkScheduler
-        self.registerLoginItem = registerLoginItem
+        self.loginItem = loginItem
+        self.rcloneCandidates = rcloneCandidates
         self.now = now
         self.awakeSince = awakeSince
         wakeNotifications.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.noteWake() }
         }
-        // Opening the status menu picks up configuration fixed while the app runs.
+        // Opening the status menu picks up configuration and login item changes made
+        // while the app runs.
         NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in await self?.reloadConfiguration() }
         }
@@ -66,7 +70,7 @@ final class SyncCoordinator: ObservableObject {
             if try settingsStore.load() == nil { try settingsStore.save(.initialTemplate) }
             latestRun = try runStateStore.load()
             transcriptLines = transcriptStore.displayLines()
-            loginWarning = registerLoginItem()
+            loginItem.registerIfNeeded()
         } catch {
             status = .disabled(reason: error.localizedDescription)
         }
@@ -104,11 +108,12 @@ final class SyncCoordinator: ObservableObject {
     /// Rereads settings.json and revalidates the rclone configuration, so fixing
     /// either while the app runs enables syncing, and breaking either disables it.
     /// rclone is asked again only when the settings or the rclone config file changed
-    /// since the last successful validation.
+    /// since the last successful validation. The login item state is refreshed too.
     func reloadConfiguration() async {
+        loginWarning = loginItem.warning()
         guard !running else { return }
         do {
-            settings = try settingsStore.load()
+            settings = try settingsStore.load()?.resolvingRclone(candidates: rcloneCandidates)
         } catch {
             settings = nil
             validatedConfiguration = nil

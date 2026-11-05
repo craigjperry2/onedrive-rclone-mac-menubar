@@ -6,12 +6,15 @@ struct MenuBarView: View {
     var body: some View {
         Group {
             Text(coordinator.status.title)
-            if let loginWarning = coordinator.loginWarning { Text(loginWarning) }
+            if let loginWarning = coordinator.loginWarning {
+                lines(loginWarning)
+                Button("Open Login Items Settings…", action: LoginItemManager.openSystemSettings)
+            }
             if let persistenceWarning = coordinator.persistenceWarning { Text(persistenceWarning) }
             if let lastSuccess = coordinator.latestRun?.lastSuccessAt {
                 Text("Last successful sync: \(lastSuccess.formatted(date: .abbreviated, time: .shortened))")
             }
-            if let reason = coordinator.status.reason { Text(reason) }
+            if let reason = coordinator.status.reason { lines(reason) }
             if coordinator.isRunning { Text("rclone is running…") }
 
             Menu(latestRunTitle) {
@@ -32,6 +35,11 @@ struct MenuBarView: View {
             Button("Quit OneDrive Sync") { NSApplication.shared.terminate(nil) }
                 .disabled(coordinator.isRunning)
         }
+    }
+
+    /// Menu rows are single lines, so messages put each short line in its own row.
+    private func lines(_ text: String) -> some View {
+        ForEach(text.split(separator: "\n").map(String.init), id: \.self) { Text($0) }
     }
 
     // An NSAlert rather than .confirmationDialog: the menu closes before the
