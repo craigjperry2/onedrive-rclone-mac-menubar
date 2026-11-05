@@ -17,8 +17,10 @@ permissions:
 
 # Main runs one at a time and never cancel each other. If several merges queue
 # up, only the newest waits; its release includes the skipped merges' commits.
+# The event name keeps pull request runs out of main's group: a run for a PR
+# that has just merged can resolve github.ref to refs/heads/main.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
