@@ -32,8 +32,4 @@ struct SyncSettings: Codable, Equatable, Sendable {
         }
         return nil
     }
-
-    func validationError(fileManager: FileManager = .default) -> String? {
-        configurationError(fileManager: fileManager) ?? availabilityError(fileManager: fileManager)
-    }
 }

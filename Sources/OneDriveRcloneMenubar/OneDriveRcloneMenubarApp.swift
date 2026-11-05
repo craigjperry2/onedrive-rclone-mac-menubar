@@ -8,7 +8,7 @@ struct OneDriveRcloneMenubarApp: App {
     init() {
         let coordinator = SyncCoordinator()
         _coordinator = StateObject(wrappedValue: coordinator)
-        coordinator.load()
+        Task { await coordinator.load() }
     }
 
     var body: some Scene {

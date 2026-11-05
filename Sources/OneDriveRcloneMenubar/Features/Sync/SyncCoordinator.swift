@@ -11,10 +11,12 @@ final class SyncCoordinator: ObservableObject {
     @Published private(set) var persistenceWarning: String?
 
     private let paths: AppPaths
-    private let runner = RcloneProcessRunner()
+    private let runner: any RcloneRunning
     private let evaluator = HealthEvaluator()
-    private let scheduler = SyncScheduler()
-    private let healthScheduler = SyncScheduler()
+    private let scheduler: any RepeatingScheduler
+    private let checkScheduler: any RepeatingScheduler
+    private let registerLoginItem: @MainActor () -> String?
+    private let now: @MainActor () -> Date
     private var settings: SyncSettings?
     private var remoteValidationError: String?
     private var validatedConfiguration: ConfigurationSnapshot?
@@ -27,12 +29,28 @@ final class SyncCoordinator: ObservableObject {
     private var runStateStore: JSONFileStore<SyncRunRecord> { JSONFileStore(fileURL: paths.runStateFile) }
     private var transcriptStore: TranscriptStore { TranscriptStore(fileURL: paths.latestTranscriptFile) }
 
-    init(paths: AppPaths = AppPaths(), awakeSince: Date = SystemWakeTime.current()) {
-        self.paths = paths
-        self.awakeSince = awakeSince
+    /// The defaults are the real dependencies; tests pass fakes so that no rclone
+    /// process, timer, login item, or wall-clock time is involved.
+    init(
+        paths: AppPaths = AppPaths(),
+        runner: any RcloneRunning = RcloneProcessRunner(),
+        scheduler: any RepeatingScheduler = SyncScheduler(),
+        checkScheduler: any RepeatingScheduler = SyncScheduler(),
         // NSWorkspace posts wake notifications on its own center, not the default one.
-        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.noteWake() }
+        wakeNotifications: NotificationCenter = NSWorkspace.shared.notificationCenter,
+        registerLoginItem: @escaping @MainActor () -> String? = LoginItemManager.register,
+        now: @escaping @MainActor () -> Date = Date.init,
+        awakeSince: Date = SystemWakeTime.current()
+    ) {
+        self.paths = paths
+        self.runner = runner
+        self.scheduler = scheduler
+        self.checkScheduler = checkScheduler
+        self.registerLoginItem = registerLoginItem
+        self.now = now
+        self.awakeSince = awakeSince
+        wakeNotifications.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.noteWake() }
         }
         // Opening the status menu picks up configuration fixed while the app runs.
         NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
@@ -40,7 +58,7 @@ final class SyncCoordinator: ObservableObject {
         }
     }
 
-    func load() {
+    func load() async {
         guard !didLoad else { return }
         didLoad = true
         do {
@@ -48,20 +66,18 @@ final class SyncCoordinator: ObservableObject {
             if try settingsStore.load() == nil { try settingsStore.save(.initialTemplate) }
             latestRun = try runStateStore.load()
             transcriptLines = transcriptStore.displayLines()
-            loginWarning = LoginItemManager.register()
+            loginWarning = registerLoginItem()
         } catch {
             status = .disabled(reason: error.localizedDescription)
         }
-        Task { await reloadConfiguration() }
-        healthScheduler.start(interval: 60) { [weak self] in
-            Task { await self?.reloadConfiguration() }
-        }
+        checkScheduler.start(interval: 60) { [weak self] in await self?.reloadConfiguration() }
+        await reloadConfiguration()
     }
 
-    func noteWake() { awakeSince = Date(); refreshStatus() }
+    func noteWake() { awakeSince = now(); refreshStatus() }
 
-    func syncNow() { Task { await start(.sync) } }
-    func resync() { Task { await start(.resync) } }
+    func syncNow() { Task { await run(.sync) } }
+    func resync() { Task { await run(.resync) } }
 
     var canStartSync: Bool {
         guard !running else { return false }
@@ -71,17 +87,17 @@ final class SyncCoordinator: ObservableObject {
 
     var isRunning: Bool { running }
 
-    func refreshStatus(now: Date = Date()) {
+    func refreshStatus() {
         guard let settings else {
             status = .disabled(reason: "No valid rclone configuration was found.")
             return
         }
         if let validation = remoteValidationError ?? settings.configurationError() {
-            status = evaluatedStatus(validationError: validation, now: now)
+            status = evaluatedStatus(validationError: validation)
         } else if let availabilityError = settings.availabilityError() {
             status = .unhealthy(reason: availabilityError)
         } else {
-            status = evaluatedStatus(validationError: nil, now: now)
+            status = evaluatedStatus(validationError: nil)
         }
     }
 
@@ -126,7 +142,7 @@ final class SyncCoordinator: ObservableObject {
         validatedConfiguration = snapshot
         guard scheduledInterval != settings.intervalSeconds else { return }
         scheduledInterval = settings.intervalSeconds
-        scheduler.start(interval: settings.intervalSeconds) { [weak self] in self?.syncNow() }
+        scheduler.start(interval: settings.intervalSeconds) { [weak self] in await self?.run(.sync) }
     }
 
     private func stopScheduledSyncs() {
@@ -134,7 +150,9 @@ final class SyncCoordinator: ObservableObject {
         scheduledInterval = nil
     }
 
-    private func start(_ kind: RcloneProcessRunner.RunKind) async {
+    /// Runs rclone unless a run is already in progress. Scheduled runs, Sync Now,
+    /// and Resync all go through here, so only one rclone process runs at a time.
+    func run(_ kind: RcloneProcessRunner.RunKind) async {
         guard !running else { return }
         guard let settings else { return }
         running = true
@@ -150,9 +168,9 @@ final class SyncCoordinator: ObservableObject {
             return
         }
         applyValidation(nil, snapshot: ConfigurationSnapshot(settings: settings))
-        let startedAt = Date()
+        let startedAt = now()
         let result = await runner.run(kind, settings: settings, transcriptURL: paths.latestTranscriptFile)
-        let finishedAt = Date()
+        let finishedAt = now()
         let previousSuccess = latestRun?.lastSuccessAt
         let succeeded = result.exitCode == 0
         let failureReason = succeeded
@@ -175,14 +193,14 @@ final class SyncCoordinator: ObservableObject {
         }
         transcriptLines = result.lines
         running = false
-        status = evaluatedStatus(validationError: nil, now: finishedAt)
+        status = evaluatedStatus(validationError: nil)
     }
 
     private func finishUnavailableRun(reason: String) {
-        let now = Date()
+        let finishedAt = now()
         let record = SyncRunRecord(
-            startedAt: now,
-            finishedAt: now,
+            startedAt: finishedAt,
+            finishedAt: finishedAt,
             outcome: .failure,
             failureReason: reason,
             lastSuccessAt: latestRun?.lastSuccessAt
@@ -201,12 +219,12 @@ final class SyncCoordinator: ObservableObject {
         status = .unhealthy(reason: reason)
     }
 
-    private func evaluatedStatus(validationError: String?, now: Date = Date()) -> SyncStatus {
+    private func evaluatedStatus(validationError: String?) -> SyncStatus {
         evaluator.status(
             validationError: validationError,
             isRunning: running,
             latestRun: latestRun,
-            now: now,
+            now: now(),
             awakeSince: awakeSince
         )
     }
