@@ -215,6 +215,77 @@ struct SyncCoordinatorTests {
         #expect(harness.loginItem.registrations == 1)
     }
 
+    @Test func scheduledFailureNotifiesOnceUntilASyncSucceeds() async throws {
+        let harness = try Harness()
+        await harness.coordinator.load()
+        await harness.runner.setExitCode(7, lastLine: "Bisync aborted")
+
+        await harness.scheduler.fire()
+        await harness.scheduler.fire()
+        #expect(harness.notifier.posted == [.syncFailed(at: harness.clock.now)])
+        let posted = try #require(harness.notifier.posted.first)
+        #expect(posted.title == "OneDrive sync needs attention")
+        #expect(posted.body.contains("OneDrive sync"))
+        #expect(posted.body.contains("review recent activity"))
+
+        await harness.runner.setExitCode(0)
+        await harness.scheduler.fire()
+        #expect(harness.notifier.posted.count == 1)
+
+        await harness.runner.setExitCode(7)
+        await harness.scheduler.fire()
+        #expect(harness.notifier.posted.count == 2)
+    }
+
+    @Test func manualFailuresDoNotNotify() async throws {
+        let harness = try Harness()
+        await harness.coordinator.load()
+        await harness.runner.setExitCode(7)
+
+        await harness.coordinator.run(.sync)
+        await harness.coordinator.run(.resync)
+
+        #expect(harness.notifier.posted.isEmpty)
+    }
+
+    @Test func unusableConfigurationNotifiesOnceButMissingSetupDoesNot() async throws {
+        let harness = try Harness()
+        await harness.runner.setValidationError(SyncSettings.readyToSetUp)
+        await harness.coordinator.load()
+        await harness.scheduler.fire()
+        #expect(harness.coordinator.activity.consecutiveSkips(for: .setupRequired) == 1)
+        #expect(harness.notifier.posted.isEmpty)
+
+        await harness.runner.setValidationError(nil)
+        await harness.checkScheduler.fire()
+        await harness.scheduler.fire()
+        try FileManager.default.removeItem(atPath: harness.settings.configPath)
+        await harness.checkScheduler.fire()
+        await harness.scheduler.fire()
+        await harness.scheduler.fire()
+
+        let notification = SyncNotification.configurationUnusable(SyncSettings.readyToSetUp)
+        #expect(harness.notifier.posted == [notification])
+        #expect(notification.body.contains("This Mac is ready to configure OneDrive sync. Choose Set Up OneDrive…"))
+    }
+
+    @Test func onlyTheThirdLowDataSkipInARowNotifies() async throws {
+        let harness = try Harness()
+        await harness.coordinator.load()
+        harness.network.isLowData = true
+
+        await harness.scheduler.fire()
+        #expect(harness.coordinator.activity.consecutiveSkips(for: .lowDataNetwork) == 1)
+        #expect(harness.notifier.posted.isEmpty)
+        await harness.scheduler.fire()
+        #expect(harness.notifier.posted.isEmpty)
+        await harness.scheduler.fire()
+        #expect(harness.notifier.posted == [.lowDataNetwork(skips: 3)])
+        await harness.scheduler.fire()
+        #expect(harness.notifier.posted.count == 1)
+        #expect(harness.notifier.posted[0].body.contains("low-data or metered network"))
+    }
+
     @Test func wakeRestartsTheFirstSyncGracePeriod() async throws {
         let harness = try Harness(awakeFor: 30 * 60)
         await harness.coordinator.load()
@@ -237,6 +308,7 @@ final class Harness {
     let clock = TestClock()
     let loginItem = FakeLoginItem()
     let network = FakeNetwork()
+    let notifier = FakeNotifier()
     var rcloneCandidates: [String] = []
     let awakeSince: Date
     private(set) var coordinator: SyncCoordinator!
@@ -264,6 +336,7 @@ final class Harness {
             loginItem: loginItem,
             rcloneCandidates: rcloneCandidates,
             isOnLowDataNetwork: { [network] in network.isLowData },
+            notifier: notifier,
             now: { [clock] in clock.now },
             awakeSince: awakeSince
         )
@@ -277,6 +350,14 @@ final class FakeLoginItem: LoginItemControlling {
 
     func registerIfNeeded() { registrations += 1 }
     func warning() -> String? { currentWarning }
+}
+
+@MainActor
+final class FakeNotifier: SyncNotifying {
+    private(set) var posted: [SyncNotification] = []
+
+    func requestAuthorization() {}
+    func post(_ notification: SyncNotification) { posted.append(notification) }
 }
 
 @MainActor
