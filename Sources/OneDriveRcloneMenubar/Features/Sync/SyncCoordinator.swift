@@ -12,7 +12,7 @@ final class SyncCoordinator: ObservableObject {
     @Published private(set) var activity = ActivityLog()
 
     private let paths: AppPaths
-    private let runner: any RcloneRunning
+    let runner: any RcloneRunning
     private let evaluator = HealthEvaluator()
     private let scheduler: any RepeatingScheduler
     private let checkScheduler: any RepeatingScheduler
@@ -161,6 +161,21 @@ final class SyncCoordinator: ObservableObject {
     private var configurationProblem: String? {
         guard let settings else { return "No settings" }
         return remoteValidationError ?? settings.configurationError()
+    }
+
+    /// The settings guided setup starts from: the saved ones, or the template, with
+    /// rclone found as usual.
+    func setupSettings() -> SyncSettings {
+        ((try? settingsStore.load()) ?? .initialTemplate).resolvingRclone(candidates: rcloneCandidates)
+    }
+
+    /// Saves the folder chosen in guided setup and applies the configuration at once.
+    /// The rest of settings.json, including an empty rclone path, is kept.
+    func completeSetup(localPath: String) async throws {
+        var saved = try settingsStore.load() ?? .initialTemplate
+        saved.localPath = localPath
+        try settingsStore.save(saved)
+        await reloadConfiguration()
     }
 
     /// What the schedule does when it fires: starts a sync, or records why it did not.

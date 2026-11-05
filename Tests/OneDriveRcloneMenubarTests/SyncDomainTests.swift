@@ -215,6 +215,28 @@ struct SyncDomainTests {
         #expect(FileManager.default.fileExists(atPath: transcript.path()))
     }
 
+    @Test func authorizeReportsTheSignInPageAndStopsRcloneWhenCancelled() async throws {
+        let script = try makeExecutableScript("""
+        #!/bin/sh
+        echo "NOTICE: If your browser doesn't open automatically go to the following link: http://127.0.0.1:53682/auth?state=abc_DEF-12"
+        echo "NOTICE: Waiting for code..."
+        exec sleep 30
+        """)
+        defer { try? FileManager.default.removeItem(at: script) }
+        let settings = SyncSettings(rcloneExecutablePath: script.path(), configPath: "/tmp/test-rclone.conf", remoteName: "onedrive", localPath: "", intervalSeconds: 600)
+        let signInURL = LockedURL()
+        let started = Date()
+
+        let authorization = Task { await RcloneProcessRunner().authorize(settings) { signInURL.set($0) } }
+        while signInURL.value == nil, Date().timeIntervalSince(started) < 10 { try await Task.sleep(for: .milliseconds(20)) }
+        authorization.cancel()
+        let failure = await authorization.value
+
+        #expect(signInURL.value == URL(string: "http://127.0.0.1:53682/auth?state=abc_DEF-12"))
+        #expect(failure != nil)
+        #expect(Date().timeIntervalSince(started) < 10)
+    }
+
     @Test func systemWakeTimeNeverFallsAfterNow() {
         let now = Date()
         #expect(SystemWakeTime.current(now: now) <= now)
@@ -226,4 +248,12 @@ struct SyncDomainTests {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path())
         return url
     }
+}
+
+private final class LockedURL: @unchecked Sendable {
+    private let lock = NSLock()
+    private var url: URL?
+
+    var value: URL? { lock.withLock { url } }
+    func set(_ url: URL) { lock.withLock { self.url = url } }
 }

@@ -16,5 +16,11 @@ struct OneDriveRcloneMenubarApp: App {
             MenuBarView(coordinator: coordinator)
         }
         .menuBarExtraStyle(.menu)
+
+        Window("Set Up OneDrive Sync", id: "setup") {
+            SetupView(coordinator: coordinator)
+        }
+        .windowResizability(.contentSize)
+        .defaultLaunchBehavior(.suppressed)
     }
 }

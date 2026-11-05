@@ -1,17 +1,24 @@
 # OneDrive Rclone Menubar
 
-A macOS 26 SwiftUI menu-bar app for a locally configured OneDrive `rclone bisync` mirror.
+A macOS 26 SwiftUI menu-bar app that keeps a folder on your Mac in sync with OneDrive, using `rclone bisync`.
 
-It runs a normal sync every ten minutes, shows whether the latest run is healthy, and keeps the final 30 lines of the latest run available from the menu. Only one rclone process runs at a time. Scheduled syncs are skipped while the Mac is on a Low Data Mode or metered network, such as a phone hotspot, and resume on a normal network; **Sync Now** always runs. Each run and each skipped scheduled sync is recorded with its reason in Application Support `activity.json`. It does not create OneDrive credentials or edit `rclone.conf`.
+It runs a normal sync every ten minutes, shows whether the latest run is healthy, and keeps the final 30 lines of the latest run available from the menu. Only one rclone process runs at a time. Scheduled syncs are skipped while the Mac is on a Low Data Mode or metered network, such as a phone hotspot, and resume on a normal network; **Sync Now** always runs. Each run and each skipped scheduled sync is recorded with its reason in Application Support `activity.json`.
 
 ## Setup
 
-1. Install rclone, for example with `brew install rclone` or from Nix, and complete OneDrive setup in rclone outside this app.
+1. Install rclone, for example with `brew install rclone` or from Nix. The app finds it in `/opt/homebrew/bin`, `/usr/local/bin`, `~/.nix-profile/bin`, `/etc/profiles/per-user/$USER/bin`, `/run/current-system/sw/bin`, and its `PATH`.
 2. Install the app with nix-darwin (below), or open `OneDriveRcloneMenubar.xcodeproj` in Xcode and run the `OneDriveRcloneMenubar` scheme. The app bundle is an agent application, so it lives in the menu bar rather than the Dock and registers itself as a login item. `swift run` remains useful for quick development checks, but does not provide the app-bundle behavior.
-3. Edit the generated Application Support `settings.json` file with the rclone config path, OneDrive remote name, and local mirror path (see [docs/settings.example.json](docs/settings.example.json)). Leave `rcloneExecutablePath` empty: the app finds rclone in `/opt/homebrew/bin`, `/usr/local/bin`, `~/.nix-profile/bin`, `/etc/profiles/per-user/$USER/bin`, `/run/current-system/sw/bin`, and its `PATH`. Set it only to use a different rclone; if that path stops working, for example after a Nix garbage collection, the app falls back to the locations above.
+3. Choose **Set Up OneDrive…** from the menu-bar icon and follow the steps:
+   - **Sign in with Microsoft.** rclone opens the Microsoft sign-in page in your browser and saves the access it is given as a remote named `onedrive` in rclone's configuration file (`~/.config/rclone/rclone.conf` unless `settings.json` says otherwise). If that remote already exists, setup offers to use it.
+   - **Choose a folder** on this Mac for the copy of your OneDrive.
+   - **Start the first sync.** Setup explains what the first sync copies before anything changes. It then adds the `RCLONE_TEST` check file to both sides, saves the folder in `settings.json`, and runs `rclone bisync --resync`, so later syncs work without a manual **Resync…**.
 4. If macOS asks you to approve launch at login, or you turn it off later, the menu says the app will not start at login. Choose **Open Login Items Settings…** to allow it.
 
-Until rclone, its configuration file, and the remote are usable, the app stays disabled and its menu explains why: that rclone needs installing, or that the Mac is ready but OneDrive is not configured yet. Changes to `settings.json` or `rclone.conf` take effect within a minute, or as soon as you open the menu.
+Until setup is finished, or when the configuration stops working, the app is disabled and its menu explains why and what to do. The menu also explains every other state in plain language.
+
+### Configuring by hand
+
+Setup only writes `localPath` in the Application Support `settings.json`. To use an rclone remote you already have, either run setup and continue with the existing remote, or edit `settings.json` yourself (see [docs/settings.example.json](docs/settings.example.json)): `configPath`, `remoteName`, `localPath`, and `intervalSeconds`. Leave `rcloneExecutablePath` empty to use the rclone the app finds; if you set it and that path stops working, for example after a Nix garbage collection, the app falls back to the locations above. A hand-made configuration needs `RCLONE_TEST` on both sides and one **Resync…** before ordinary syncs work. Changes to `settings.json` or `rclone.conf` take effect within a minute, or as soon as you open the menu.
 
 ## Installing with nix-darwin
 
@@ -54,7 +61,7 @@ Use **Sync Now** for an ordinary immediate run. Use **Resync** only for initiali
 
 Run `swift test` to execute the tests. `SyncCoordinator` takes its rclone runner, schedulers, wake notifications, login-item registration, and clock as parameters, so its tests use fakes and never launch rclone or wait for real time.
 
-To exercise real syncs without OneDrive, run `scripts/setup-fake-onedrive.sh` on a test machine. It configures the app against a fake OneDrive made of local directories; see [docs/testing-with-fake-onedrive.md](docs/testing-with-fake-onedrive.md).
+To exercise real syncs without OneDrive, run `scripts/setup-fake-onedrive.sh` on a test machine. It configures the app against a fake OneDrive made of local directories. With `--guided`, it leaves the app unconfigured and stands in for the Microsoft sign-in, so the whole guided setup can be run except the browser step; see [docs/testing-with-fake-onedrive.md](docs/testing-with-fake-onedrive.md).
 
 ### Releases
 

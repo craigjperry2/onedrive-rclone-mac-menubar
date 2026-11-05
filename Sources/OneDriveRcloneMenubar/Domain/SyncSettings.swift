@@ -11,11 +11,14 @@ struct SyncSettings: Codable, Equatable, Sendable {
         rcloneExecutablePath: "",
         configPath: FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/rclone/rclone.conf").path(),
         remoteName: "onedrive",
-        localPath: FileManager.default.homeDirectoryForCurrentUser.appending(path: "onedrive-rclone").path(),
+        // Empty until guided setup saves the folder the user chose, so a OneDrive
+        // remote created during setup is never synced into a folder nobody picked.
+        localPath: "",
         intervalSeconds: 600
     )
 
     // Menu rows are single lines, so long explanations break into short lines.
+    static let readyToSetUp = "This Mac is ready to configure OneDrive sync.\nChoose Set Up OneDrive… to connect your account."
     static let rcloneRequired = "rclone is required before OneDrive sync can be configured.\nInstall it with Homebrew (brew install rclone) or Nix."
 
     /// Where Homebrew (Apple silicon and Intel) and Nix install rclone, followed by
@@ -49,10 +52,10 @@ struct SyncSettings: Codable, Equatable, Sendable {
     func configurationError(fileManager: FileManager = .default) -> String? {
         guard fileManager.isExecutableFile(atPath: rcloneExecutablePath) else { return Self.rcloneRequired }
         guard fileManager.fileExists(atPath: configPath) else {
-            return "This Mac is ready to configure OneDrive sync.\nrclone is installed but has no configuration yet."
+            return Self.readyToSetUp
         }
         guard !remoteName.isEmpty else { return "Set a OneDrive remote name in settings.json." }
-        guard !localPath.isEmpty else { return "Set a local mirror path in settings.json." }
+        guard !localPath.isEmpty else { return Self.readyToSetUp }
         guard intervalSeconds > 0 else { return "Set a positive sync interval in settings.json." }
         return nil
     }

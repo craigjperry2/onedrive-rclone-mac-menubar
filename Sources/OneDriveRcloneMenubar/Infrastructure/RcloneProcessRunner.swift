@@ -4,6 +4,12 @@ import Foundation
 protocol RcloneRunning: Sendable {
     func validate(_ settings: SyncSettings) async -> String?
     func run(_ kind: RcloneProcessRunner.RunKind, settings: SyncSettings, transcriptURL: URL) async -> RcloneProcessRunner.Result
+    func hasRemote(_ settings: SyncSettings) async -> Bool
+    /// Creates the OneDrive remote through rclone's browser sign-in, returning a
+    /// failure reason or nil. Cancelling the calling task stops rclone.
+    func authorize(_ settings: SyncSettings, onSignInURL: @escaping @Sendable (URL) -> Void) async -> String?
+    /// Creates the RCLONE_TEST file that `--check-access` needs on the OneDrive side.
+    func createRemoteCheckFile(_ settings: SyncSettings) async -> String?
 }
 
 actor RcloneProcessRunner: RcloneRunning {
@@ -23,11 +29,11 @@ actor RcloneProcessRunner: RcloneRunning {
 
     func validate(_ settings: SyncSettings) async -> String? {
         if let error = settings.configurationError() { return error }
-        let result = await runProcess(executable: settings.rcloneExecutablePath, arguments: ["listremotes"], environment: ["RCLONE_CONFIG": settings.configPath], transcriptURL: nil)
+        let result = await runProcess(settings, arguments: ["listremotes"])
         guard result.exitCode == 0 else { return "Unable to read the rclone configuration." }
         return result.lines.contains("\(settings.remoteName):")
             ? nil
-            : "This Mac is ready to configure OneDrive sync.\nrclone has no remote named \"\(settings.remoteName)\" yet."
+            : SyncSettings.readyToSetUp
     }
 
     func run(_ kind: RunKind, settings: SyncSettings, transcriptURL: URL) async -> Result {
@@ -37,10 +43,43 @@ actor RcloneProcessRunner: RcloneRunning {
             "--modify-window", "2s", "--resilient", "--fast-list", "--onedrive-delta"
         ]
         if kind == .resync { arguments.append("--resync") }
-        return await runProcess(executable: settings.rcloneExecutablePath, arguments: arguments, environment: ["RCLONE_CONFIG": settings.configPath], transcriptURL: transcriptURL)
+        return await runProcess(settings, arguments: arguments, transcriptURL: transcriptURL)
     }
 
-    private func runProcess(executable: String, arguments: [String], environment: [String: String], transcriptURL: URL?) async -> Result {
+    func hasRemote(_ settings: SyncSettings) async -> Bool {
+        let result = await runProcess(settings, arguments: ["listremotes"])
+        return result.exitCode == 0 && result.lines.contains("\(settings.remoteName):")
+    }
+
+    // rclone takes the default answer to the questions after sign-in, which picks
+    // the account's own OneDrive. --no-output keeps the token out of the output.
+    func authorize(_ settings: SyncSettings, onSignInURL: @escaping @Sendable (URL) -> Void) async -> String? {
+        let result = await runProcess(settings, arguments: ["config", "create", settings.remoteName, "onedrive", "--no-output"]) { text in
+            if let url = Self.signInURL(in: text) { onSignInURL(url) }
+        }
+        return result.exitCode == 0 ? nil : result.failureReason ?? "rclone could not connect to OneDrive."
+    }
+
+    func createRemoteCheckFile(_ settings: SyncSettings) async -> String? {
+        let result = await runProcess(settings, arguments: ["touch", "\(settings.remoteName):RCLONE_TEST"])
+        return result.exitCode == 0 ? nil : result.failureReason ?? "rclone could not create RCLONE_TEST in OneDrive."
+    }
+
+    /// The local page rclone prints in case the browser does not open by itself.
+    static func signInURL(in output: String) -> URL? {
+        output.firstMatch(of: /http:\/\/127\.0\.0\.1:\d+\/auth\?state=[A-Za-z0-9_-]+/).flatMap { URL(string: String($0.output)) }
+    }
+
+    private func runProcess(
+        _ settings: SyncSettings,
+        arguments: [String],
+        transcriptURL: URL? = nil,
+        onOutput: (@Sendable (String) -> Void)? = nil
+    ) async -> Result {
+        await runProcess(executable: settings.rcloneExecutablePath, arguments: arguments, environment: ["RCLONE_CONFIG": settings.configPath], transcriptURL: transcriptURL, onOutput: onOutput)
+    }
+
+    private func runProcess(executable: String, arguments: [String], environment: [String: String], transcriptURL: URL?, onOutput: (@Sendable (String) -> Void)?) async -> Result {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -60,34 +99,40 @@ actor RcloneProcessRunner: RcloneRunning {
         process.standardOutput = outputPipe
         process.standardError = outputPipe
         let outputTask = Task.detached(priority: .utility) {
-            BoundedOutputReader.read(from: outputPipe.fileHandleForReading)
+            BoundedOutputReader.read(from: outputPipe.fileHandleForReading, onOutput: onOutput)
         }
 
-        let execution = await withCheckedContinuation { continuation in
-            let completion = ProcessCompletion()
-            let finish: @Sendable () -> Void = {
-                guard completion.claimCompletion() else { return }
-                let timedOut = completion.didTimeOut()
-                let exitCode: Int32 = timedOut ? -1 : process.terminationStatus
-                continuation.resume(returning: ProcessExecution(exitCode: exitCode, timedOut: timedOut, launchError: nil))
-            }
-            process.terminationHandler = { _ in finish() }
-            do {
-                try process.run()
-            } catch {
+        // Cancelling the calling task stops rclone, like a timeout without the reason.
+        let execution = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let completion = ProcessCompletion()
+                let finish: @Sendable () -> Void = {
+                    guard completion.claimCompletion() else { return }
+                    let timedOut = completion.didTimeOut()
+                    let exitCode: Int32 = timedOut ? -1 : process.terminationStatus
+                    continuation.resume(returning: ProcessExecution(exitCode: exitCode, timedOut: timedOut, launchError: nil))
+                }
+                process.terminationHandler = { _ in finish() }
+                do {
+                    try process.run()
+                } catch {
+                    try? outputPipe.fileHandleForWriting.close()
+                    continuation.resume(returning: ProcessExecution(exitCode: -1, timedOut: false, launchError: error.localizedDescription))
+                    return
+                }
                 try? outputPipe.fileHandleForWriting.close()
-                continuation.resume(returning: ProcessExecution(exitCode: -1, timedOut: false, launchError: error.localizedDescription))
-                return
+                let timeoutTask = Task.detached { [timeout] in
+                    do { try await Task.sleep(for: .seconds(timeout)) } catch { return }
+                    guard process.isRunning, completion.markTimedOutIfNeeded() else { return }
+                    process.terminate()
+                    do { try await Task.sleep(for: .seconds(5)) } catch { return }
+                    if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                }
+                completion.installTimeoutTask(timeoutTask)
+                if Task.isCancelled { process.terminate() }
             }
-            try? outputPipe.fileHandleForWriting.close()
-            let timeoutTask = Task.detached { [timeout] in
-                do { try await Task.sleep(for: .seconds(timeout)) } catch { return }
-                guard process.isRunning, completion.markTimedOutIfNeeded() else { return }
-                process.terminate()
-                do { try await Task.sleep(for: .seconds(5)) } catch { return }
-                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-            }
-            completion.installTimeoutTask(timeoutTask)
+        } onCancel: {
+            if process.isRunning { process.terminate() }
         }
 
         let outputData = await outputTask.value
@@ -117,10 +162,12 @@ private struct ProcessExecution: Sendable {
 }
 
 private enum BoundedOutputReader {
-    static func read(from handle: FileHandle, limit: Int = TranscriptStore.maximumStoredBytes) -> Data {
+    static func read(from handle: FileHandle, limit: Int = TranscriptStore.maximumStoredBytes, onOutput: (@Sendable (String) -> Void)? = nil) -> Data {
         defer { try? handle.close() }
         var output = Data()
-        while let chunk = try? handle.read(upToCount: 8 * 1024), !chunk.isEmpty {
+        // availableData returns as soon as rclone writes anything, so callers see output live.
+        while case let chunk = handle.availableData, !chunk.isEmpty {
+            onOutput?(String(decoding: chunk, as: UTF8.self))
             output.append(chunk)
             if output.count > limit { output.removeFirst(output.count - limit) }
         }

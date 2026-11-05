@@ -30,6 +30,19 @@ It also writes `RCLONE_TEST` to both sides, which the app's `--check-access` req
 
 The app writes its state to `~/Library/Application Support/OneDriveRcloneMenubar/`: `run-state.json` records each run's `outcome`, and `latest-run.log` holds rclone's output, which is empty after a successful run because rclone logs nothing at its default level. To start again from nothing, quit the app, delete `~/onedrive-fake`, `run-state.json`, `latest-run.log`, and `~/Library/Caches/rclone/bisync`, then rerun the script.
 
+## Guided setup
+
+`scripts/setup-fake-onedrive.sh --guided` prepares the fake OneDrive but leaves the app unconfigured, so you can run **Set Up OneDrive…** end to end. It writes `settings.json` with an empty `localPath`, points `configPath` at `~/onedrive-fake/rclone.conf` (not created yet), and sets `rcloneExecutablePath` to a wrapper, `~/onedrive-fake/bin/rclone`, that stands in for the Microsoft sign-in:
+
+- `rclone config create onedrive onedrive` prints what rclone prints, including the sign-in link, and waits.
+- `touch ~/onedrive-fake/approve` acts as a completed sign-in: the wrapper creates the `onedrive` alias remote and exits.
+- `touch ~/onedrive-fake/deny` acts as a refused sign-in: the wrapper exits with an error.
+- Every other command goes to the real rclone.
+
+To start from nothing, quit the app and delete `~/onedrive-fake`, the folder you chose in setup, the files in `~/Library/Application Support/OneDriveRcloneMenubar/`, and `~/Library/Caches/rclone/bisync`. In the folder picker, **Cmd-Shift-G** opens a path field; a synthetic Return does not confirm it, but double-clicking the suggested path does.
+
+Only the browser step needs a real Microsoft account. On a real Mac, check that **Sign In with Microsoft…** opens the browser, that signing in creates a `onedrive` remote of type `onedrive` in `~/.config/rclone/rclone.conf`, and that the first sync succeeds against it.
+
 ## Driving the menu from a shell (Amp macOS Satellite)
 
 Synthetic clicks open the status item's menu and select its items. Install `cliclick` with `brew install cliclick`.

@@ -226,7 +226,7 @@ struct SyncCoordinatorTests {
 }
 
 @MainActor
-private final class Harness {
+final class Harness {
     let root = FileManager.default.temporaryDirectory.appending(path: "sync-coordinator-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
     let paths: AppPaths
     let settings: SyncSettings
@@ -241,12 +241,12 @@ private final class Harness {
     let awakeSince: Date
     private(set) var coordinator: SyncCoordinator!
 
-    init(awakeFor: TimeInterval = 60) throws {
+    init(awakeFor: TimeInterval = 60, localPath: String? = nil) throws {
         paths = AppPaths(rootDirectory: root)
         try paths.createDirectories()
         let configFile = root.appending(path: "rclone.conf")
         try Data("[onedrive]\ntype = alias\n".utf8).write(to: configFile)
-        settings = SyncSettings(rcloneExecutablePath: "/bin/sh", configPath: configFile.path(), remoteName: "onedrive", localPath: root.appending(path: "local").path(), intervalSeconds: 600)
+        settings = SyncSettings(rcloneExecutablePath: "/bin/sh", configPath: configFile.path(), remoteName: "onedrive", localPath: localPath ?? root.appending(path: "local").path(), intervalSeconds: 600)
         try JSONFileStore<SyncSettings>(fileURL: paths.settingsFile).save(settings)
         awakeSince = clock.now.addingTimeInterval(-awakeFor)
         coordinator = makeCoordinator()
@@ -271,7 +271,7 @@ private final class Harness {
 }
 
 @MainActor
-private final class FakeLoginItem: LoginItemControlling {
+final class FakeLoginItem: LoginItemControlling {
     var currentWarning: String?
     private(set) var registrations = 0
 
@@ -280,18 +280,18 @@ private final class FakeLoginItem: LoginItemControlling {
 }
 
 @MainActor
-private final class FakeNetwork {
+final class FakeNetwork {
     var isLowData = false
 }
 
 @MainActor
-private final class TestClock {
+final class TestClock {
     var now = Date(timeIntervalSinceReferenceDate: 800_000_000)
     func advance(by interval: TimeInterval) { now += interval }
 }
 
 @MainActor
-private final class ManualScheduler: RepeatingScheduler {
+final class ManualScheduler: RepeatingScheduler {
     private var action: (@MainActor () async -> Void)?
 
     func start(interval: TimeInterval, action: @escaping @MainActor () async -> Void) { self.action = action }
@@ -299,10 +299,14 @@ private final class ManualScheduler: RepeatingScheduler {
     func fire() async { await action?() }
 }
 
-private actor FakeRcloneRunner: RcloneRunning {
+actor FakeRcloneRunner: RcloneRunning {
     private(set) var runs: [RcloneProcessRunner.RunKind] = []
     /// The rclone executable of every validation and run, in order.
     private(set) var rcloneExecutablePaths: [String] = []
+    private(set) var remoteExists = false
+    private(set) var authorizeCalls = 0
+    private(set) var remoteCheckFiles = 0
+    private var authorization: CheckedContinuation<String?, Never>?
     private var validationError: String?
     private var exitCode: Int32 = 0
     private var lastLine: String?
@@ -323,6 +327,32 @@ private actor FakeRcloneRunner: RcloneRunning {
     }
 
     // Like the real runner, an incomplete settings file fails before rclone is asked.
+    func hasRemote(_ settings: SyncSettings) async -> Bool { remoteExists }
+
+    /// Waits like rclone does for the browser, until `finishAuthorization` or cancellation.
+    func authorize(_ settings: SyncSettings, onSignInURL: @escaping @Sendable (URL) -> Void) async -> String? {
+        authorizeCalls += 1
+        onSignInURL(URL(string: "http://127.0.0.1:53682/auth?state=test")!)
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { authorization = $0 }
+        } onCancel: {
+            Task { await self.finishAuthorization(failure: "terminated") }
+        }
+    }
+
+    func finishAuthorization(failure: String?) {
+        if failure == nil { remoteExists = true }
+        authorization?.resume(returning: failure)
+        authorization = nil
+    }
+
+    var isWaitingForAuthorization: Bool { authorization != nil }
+
+    func createRemoteCheckFile(_ settings: SyncSettings) async -> String? {
+        remoteCheckFiles += 1
+        return nil
+    }
+
     func validate(_ settings: SyncSettings) async -> String? {
         rcloneExecutablePaths.append(settings.rcloneExecutablePath)
         return settings.configurationError() ?? validationError
@@ -339,4 +369,16 @@ private actor FakeRcloneRunner: RcloneRunning {
         }
         return RcloneProcessRunner.Result(exitCode: exitCode, lines: lastLine.map { [$0] } ?? [], failureReason: lastLine, persistenceWarning: nil)
     }
+}
+
+private struct ConditionTimedOut: Error {}
+
+/// Lets queued main-actor work run until `condition` holds, without sleeping.
+@MainActor
+func waitUntil(_ condition: @MainActor () async -> Bool) async throws {
+    for _ in 0..<10_000 {
+        if await condition() { return }
+        await Task.yield()
+    }
+    throw ConditionTimedOut()
 }
