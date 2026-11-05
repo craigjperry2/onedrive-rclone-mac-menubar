@@ -30,7 +30,8 @@ final class SyncCoordinator: ObservableObject {
     init(paths: AppPaths = AppPaths(), awakeSince: Date = SystemWakeTime.current()) {
         self.paths = paths
         self.awakeSince = awakeSince
-        NotificationCenter.default.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+        // NSWorkspace posts wake notifications on its own center, not the default one.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.noteWake() }
         }
         // Opening the status menu picks up configuration fixed while the app runs.
