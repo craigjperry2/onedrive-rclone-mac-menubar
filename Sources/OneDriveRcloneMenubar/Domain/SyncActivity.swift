@@ -18,6 +18,10 @@ struct SyncActivity: Codable, Equatable, Sendable {
     var finishedAt: Date
     /// How many consecutive scheduled syncs a skip entry stands for.
     var count = 1
+
+    var isSkip: Bool {
+        if case .skipped = outcome { true } else { false }
+    }
 }
 
 enum SkipReason: String, Codable, Sendable {

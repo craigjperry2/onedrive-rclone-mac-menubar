@@ -19,6 +19,7 @@ final class SyncCoordinator: ObservableObject {
     private let loginItem: any LoginItemControlling
     private let rcloneCandidates: [String]
     private let isOnLowDataNetwork: @MainActor () -> Bool
+    private let notifier: any SyncNotifying
     private let now: @MainActor () -> Date
     private var settings: SyncSettings?
     private var remoteValidationError: String?
@@ -34,7 +35,8 @@ final class SyncCoordinator: ObservableObject {
     private var activityStore: JSONFileStore<ActivityLog> { JSONFileStore(fileURL: paths.activityFile) }
 
     /// The defaults are the real dependencies; tests pass fakes so that no rclone
-    /// process, timer, login item, rclone installation, network, or wall-clock time is involved.
+    /// process, timer, login item, rclone installation, network, notification, or
+    /// wall-clock time is involved.
     init(
         paths: AppPaths = AppPaths(),
         runner: any RcloneRunning = RcloneProcessRunner(),
@@ -45,6 +47,7 @@ final class SyncCoordinator: ObservableObject {
         loginItem: any LoginItemControlling = LoginItemManager(),
         rcloneCandidates: [String] = SyncSettings.rcloneCandidates(),
         isOnLowDataNetwork: @escaping @MainActor () -> Bool = { NetworkMonitor.shared.isLowDataNetwork },
+        notifier: any SyncNotifying = UserNotifier(),
         now: @escaping @MainActor () -> Date = Date.init,
         awakeSince: Date = SystemWakeTime.current()
     ) {
@@ -55,6 +58,7 @@ final class SyncCoordinator: ObservableObject {
         self.loginItem = loginItem
         self.rcloneCandidates = rcloneCandidates
         self.isOnLowDataNetwork = isOnLowDataNetwork
+        self.notifier = notifier
         self.now = now
         self.awakeSince = awakeSince
         wakeNotifications.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -78,6 +82,7 @@ final class SyncCoordinator: ObservableObject {
             // History is informational, so an unreadable file starts a new one.
             activity = (try? activityStore.load()) ?? ActivityLog()
             loginItem.registerIfNeeded()
+            notifier.requestAuthorization()
         } catch {
             status = .disabled(reason: error.localizedDescription)
         }
@@ -199,13 +204,35 @@ final class SyncCoordinator: ObservableObject {
     }
 
     private func recordActivity(_ entry: SyncActivity) {
+        let previousRunFailed = activity.entries.last { !$0.isSkip }.map { $0.outcome != .succeeded } ?? false
         activity.record(entry)
         do {
             try activityStore.save(activity)
         } catch {
             persistenceWarning = joinedWarning(persistenceWarning, "Recent activity could not be saved: \(error.localizedDescription)")
         }
+        if entry.trigger == .scheduled, let notification = notification(for: entry, previousRunFailed: previousRunFailed) {
+            notifier.post(notification)
+        }
     }
+
+    /// Only problems with scheduled syncs notify, since the user is watching when they
+    /// choose Sync Now or Resync. Each problem notifies once when it starts, not on
+    /// every scheduled sync while it lasts, and a single low-data skip stays quiet.
+    private func notification(for entry: SyncActivity, previousRunFailed: Bool) -> SyncNotification? {
+        switch entry.outcome {
+        case .failed where !previousRunFailed:
+            .syncFailed(at: entry.startedAt)
+        case .skipped(.configurationUnusable) where activity.consecutiveSkips(for: .configurationUnusable) == 1:
+            .configurationUnusable(configurationProblem ?? SkipReason.configurationUnusable.explanation)
+        case .skipped(.lowDataNetwork) where activity.consecutiveSkips(for: .lowDataNetwork) == Self.lowDataSkipsBeforeNotifying:
+            .lowDataNetwork(skips: Self.lowDataSkipsBeforeNotifying)
+        default:
+            nil
+        }
+    }
+
+    static let lowDataSkipsBeforeNotifying = 3
 
     /// Runs rclone unless a run is already in progress. Scheduled runs, Sync Now,
     /// and Resync all go through here, so only one rclone process runs at a time.

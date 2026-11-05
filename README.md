@@ -2,7 +2,7 @@
 
 A macOS 26 SwiftUI menu-bar app that keeps a folder on your Mac in sync with OneDrive, using `rclone bisync`.
 
-It runs a normal sync every ten minutes, shows whether the latest run is healthy, and keeps the final 30 lines of the latest run available from the menu. Only one rclone process runs at a time. Scheduled syncs are skipped while the Mac is on a Low Data Mode or metered network, such as a phone hotspot, and resume on a normal network; **Sync Now** always runs. Each run and each skipped scheduled sync is recorded with its reason in Application Support `activity.json`.
+It runs a normal sync every ten minutes, shows whether the latest run is healthy, and keeps the final 30 lines of the latest run available from the menu. Only one rclone process runs at a time. Scheduled syncs are skipped while the Mac is on a Low Data Mode or metered network, such as a phone hotspot, and resume on a normal network; **Sync Now** always runs. Each run and each skipped scheduled sync is recorded with its reason in Application Support `activity.json`. When a scheduled sync fails, stops because its configuration can no longer be used, or has been skipped three times in a row on a low-data network, the app posts one macOS notification, which you can turn off in System Settings > Notifications. It does not notify again until the problem clears, and Sync Now and Resync never notify.
 
 ## Setup
 
@@ -59,7 +59,7 @@ Use **Sync Now** for an ordinary immediate run. Use **Resync** only for initiali
 
 ## Development
 
-Run `swift test` to execute the tests. `SyncCoordinator` takes its rclone runner, schedulers, wake notifications, login-item registration, and clock as parameters, so its tests use fakes and never launch rclone or wait for real time.
+Run `swift test` to execute the tests. `SyncCoordinator` takes its rclone runner, schedulers, wake notifications, login-item registration, notifier, and clock as parameters, so its tests use fakes and never launch rclone or wait for real time.
 
 To exercise real syncs without OneDrive, run `scripts/setup-fake-onedrive.sh` on a test machine. It configures the app against a fake OneDrive made of local directories. With `--guided`, it leaves the app unconfigured and stands in for the Microsoft sign-in, so the whole guided setup can be run except the browser step; see [docs/testing-with-fake-onedrive.md](docs/testing-with-fake-onedrive.md).
 
