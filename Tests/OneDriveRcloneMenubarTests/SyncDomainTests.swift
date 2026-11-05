@@ -45,20 +45,8 @@ struct SyncDomainTests {
         #expect(lines.last == "35")
     }
 
-    @Test func transcriptStoreTrimsPersistedOutput() throws {
-        let file = FileManager.default.temporaryDirectory.appending(path: "onedrive-rclone-transcript-trim-\(UUID().uuidString).log")
-        defer { try? FileManager.default.removeItem(at: file) }
-        let line = String(repeating: "x", count: 1024)
-        try Array(repeating: line, count: 100).joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
-
-        let store = TranscriptStore(fileURL: file)
-        store.trimToRecentBytes()
-        #expect(try Data(contentsOf: file).count <= TranscriptStore.maximumStoredBytes)
-        #expect(store.displayLines().count == 30)
-    }
-
     @Test func blankExecutableLeavesSettingsDisabled() {
-        #expect(SyncSettings.initialTemplate.validationError() == "Set rcloneExecutablePath in settings.json.")
+        #expect(SyncSettings.initialTemplate.configurationError() == "Set rcloneExecutablePath in settings.json.")
     }
 
     @Test func externalVolumeAvailabilityIsNotAConfigurationError() {

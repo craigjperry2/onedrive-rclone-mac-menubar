@@ -26,14 +26,6 @@ struct TranscriptStore: Sendable {
         return Self.displayLines(from: data, limit: limit)
     }
 
-    func trimToRecentBytes(limit: Int = maximumStoredBytes) {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path(percentEncoded: false)),
-              let size = attributes[.size] as? NSNumber,
-              size.intValue > limit,
-              let data = recentFileData(limit: limit) else { return }
-        try? data.write(to: fileURL, options: .atomic)
-    }
-
     func replace(with data: Data) throws {
         try Self.recentData(from: data).write(to: fileURL, options: .atomic)
     }

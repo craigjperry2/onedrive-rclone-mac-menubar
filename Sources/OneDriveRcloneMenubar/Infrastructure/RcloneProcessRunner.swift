@@ -1,7 +1,12 @@
 import Darwin
 import Foundation
 
-actor RcloneProcessRunner {
+protocol RcloneRunning: Sendable {
+    func validate(_ settings: SyncSettings) async -> String?
+    func run(_ kind: RcloneProcessRunner.RunKind, settings: SyncSettings, transcriptURL: URL) async -> RcloneProcessRunner.Result
+}
+
+actor RcloneProcessRunner: RcloneRunning {
     enum RunKind { case sync, resync }
     struct Result: Sendable {
         let exitCode: Int32
