@@ -24,6 +24,17 @@ struct MenuBarView: View {
             }
             if coordinator.isRunning { Text("rclone is running…") }
 
+            Menu("Recent Activity") {
+                let now = Date()
+                if coordinator.activity.recent.isEmpty { Text("No sync activity yet") }
+                ForEach(Array(coordinator.activity.recent.enumerated()), id: \.offset) { _, entry in
+                    if case .failed(let reason) = entry.outcome {
+                        Menu(entry.summary(now: now)) { lines(reason) }
+                    } else {
+                        Text(entry.summary(now: now))
+                    }
+                }
+            }
             Menu(latestRunTitle) {
                 if coordinator.transcriptLines.isEmpty {
                     Text("No run output yet")

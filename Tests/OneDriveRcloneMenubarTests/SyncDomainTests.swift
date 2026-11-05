@@ -64,6 +64,37 @@ struct SyncDomainTests {
         #expect(log.entries.last?.startedAt == start + Double(ActivityLog.capacity - 1))
     }
 
+    @Test func recentActivityListsNewestFirstWithPlainTimestampedSummaries() {
+        let day = Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 5))!
+        func at(_ hour: Int, _ minute: Int) -> Date { day.addingTimeInterval(Double(hour * 3600 + minute * 60)) }
+        func time(_ date: Date) -> String { date.formatted(date: .omitted, time: .shortened) }
+        var log = ActivityLog()
+        log.record(SyncActivity(trigger: .scheduled, outcome: .skipped(.setupRequired), startedAt: at(8, 0), finishedAt: at(8, 0)))
+        #expect(log.recent.isEmpty)
+
+        log.record(SyncActivity(trigger: .scheduled, outcome: .skipped(.lowDataNetwork), startedAt: at(9, 0), finishedAt: at(9, 0)))
+        log.record(SyncActivity(trigger: .scheduled, outcome: .succeeded, startedAt: at(10, 0), finishedAt: at(10, 4)))
+        log.record(SyncActivity(trigger: .scheduled, outcome: .failed(reason: "bisync aborted"), startedAt: at(14, 30), finishedAt: at(14, 31)))
+        let rows = log.recent.map { $0.summary(now: at(15, 0)) }
+
+        #expect(rows == [
+            "Scheduled sync needed attention at \(time(at(14, 31)))",
+            "Scheduled sync succeeded at \(time(at(10, 4)))",
+            "Scheduled sync skipped at \(time(at(9, 0))): low-data or metered network",
+        ])
+
+        let repeated = SyncActivity(trigger: .scheduled, outcome: .skipped(.lowDataNetwork), startedAt: at(9, 0), finishedAt: at(9, 20), count: 3)
+        #expect(repeated.summary(now: at(15, 0)) == "3 scheduled syncs skipped, \(time(at(9, 0))) to \(time(at(9, 20))): low-data or metered network")
+        let yesterday = SyncActivity(trigger: .syncNow, outcome: .succeeded, startedAt: at(-1, 0), finishedAt: at(-1, 0))
+        #expect(yesterday.summary(now: at(15, 0)).contains(at(-1, 0).formatted(.dateTime.month(.abbreviated).day())))
+
+        for minute in 0..<30 {
+            log.record(SyncActivity(trigger: .syncNow, outcome: .succeeded, startedAt: at(16, minute), finishedAt: at(16, minute)))
+        }
+        #expect(log.recent.count == 20)
+        #expect(log.recent.first?.finishedAt == at(16, 29))
+    }
+
     @Test func transcriptStoreReturnsOnlyLatestThirtyLines() throws {
         let file = FileManager.default.temporaryDirectory.appending(path: "onedrive-rclone-transcript-\(UUID().uuidString).log")
         defer { try? FileManager.default.removeItem(at: file) }
