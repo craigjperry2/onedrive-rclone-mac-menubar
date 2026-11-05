@@ -18,7 +18,20 @@ struct SyncDomainTests {
 
         #expect(evaluator.status(validationError: nil, isRunning: false, latestRun: run, now: now, awakeSince: now.addingTimeInterval(-60)) == .healthy(lastSuccess: lastSuccess))
         #expect(evaluator.status(validationError: nil, isRunning: false, latestRun: run, now: now, awakeSince: now.addingTimeInterval(-1_800)) == .unhealthy(reason: "No successful sync completed in the last 25 minutes."))
-        #expect(evaluator.status(validationError: nil, isRunning: true, latestRun: run, now: now, awakeSince: now.addingTimeInterval(-1_800)) == .unhealthy(reason: "No successful sync completed in the last 25 minutes."))
+    }
+
+    @Test func runningTakesPrecedenceOverFailedStaleOrMissingSuccess() {
+        let now = Date.now
+        let awake = now.addingTimeInterval(-3_600)
+        let failed = SyncRunRecord(startedAt: now, finishedAt: now, outcome: .failure, failureReason: "Bisync aborted", lastSuccessAt: now.addingTimeInterval(-60))
+        let stale = SyncRunRecord(startedAt: now, finishedAt: now, outcome: .success, failureReason: nil, lastSuccessAt: now.addingTimeInterval(-1_800))
+        let evaluator = HealthEvaluator()
+
+        #expect(evaluator.status(validationError: nil, isRunning: true, latestRun: failed, now: now, awakeSince: awake) == .running)
+        #expect(evaluator.status(validationError: nil, isRunning: true, latestRun: nil, now: now, awakeSince: now) == .running)
+        #expect(evaluator.status(validationError: nil, isRunning: true, latestRun: nil, now: now, awakeSince: awake) == .running)
+        #expect(evaluator.status(validationError: nil, isRunning: true, latestRun: stale, now: now, awakeSince: awake) == .running)
+        #expect(evaluator.status(validationError: "No rclone", isRunning: true, latestRun: failed, now: now, awakeSince: awake) == .disabled(reason: "No rclone"))
     }
 
     @Test func transcriptStoreReturnsOnlyLatestThirtyLines() throws {
