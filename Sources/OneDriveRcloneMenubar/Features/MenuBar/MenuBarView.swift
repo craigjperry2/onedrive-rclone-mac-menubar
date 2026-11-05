@@ -2,10 +2,12 @@ import SwiftUI
 
 struct MenuBarView: View {
     @ObservedObject var coordinator: SyncCoordinator
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Group {
             Text(coordinator.status.title)
+            if let explanation = coordinator.status.explanation { lines(explanation) }
             if let loginWarning = coordinator.loginWarning {
                 lines(loginWarning)
                 Button("Open Login Items Settings…", action: LoginItemManager.openSystemSettings)
@@ -15,6 +17,7 @@ struct MenuBarView: View {
                 Text("Last successful sync: \(lastSuccess.formatted(date: .abbreviated, time: .shortened))")
             }
             if let reason = coordinator.status.reason { lines(reason) }
+            if let advice { lines(advice) }
             if let skip = coordinator.activity.entries.last, skip.outcome == .skipped(.lowDataNetwork) {
                 Text("Scheduled syncs paused on a low-data network")
                 Text("Skipped \(skip.count == 1 ? "1 sync" : "\(skip.count) syncs") since \(skip.startedAt.formatted(date: .omitted, time: .shortened))")
@@ -32,6 +35,12 @@ struct MenuBarView: View {
             }
 
             Divider()
+            if case .disabled = coordinator.status {
+                Button("Set Up OneDrive…") {
+                    NSApp.activate()
+                    openWindow(id: "setup")
+                }
+            }
             Button("Sync Now", action: coordinator.syncNow).disabled(!coordinator.canStartSync)
             Button("Resync…", action: confirmResync).disabled(!coordinator.canStartSync)
             Divider()
@@ -39,6 +48,18 @@ struct MenuBarView: View {
             Button("Quit OneDrive Sync") { NSApplication.shared.terminate(nil) }
                 .disabled(coordinator.isRunning)
         }
+    }
+
+    /// What to do about Needs attention. Only a resync recovers when bisync says so,
+    /// or when its listings from the last run are missing (it then still calls the
+    /// error retryable under --resilient); anything else may pass on the next attempt.
+    private var advice: String? {
+        guard case .unhealthy = coordinator.status else { return nil }
+        let needsResync = ["must run --resync", "cannot find prior Path1 or Path2 listings"]
+        if coordinator.transcriptLines.contains(where: { line in needsResync.contains { line.localizedCaseInsensitiveContains($0) } }) {
+            return "rclone needs a resync to recover.\nChoose Resync… to run one."
+        }
+        return "Choose Sync Now to try again.\nLatest run shows what rclone reported."
     }
 
     /// Menu rows are single lines, so messages put each short line in its own row.
