@@ -11,6 +11,7 @@ struct AppPaths: Sendable {
     var settingsFile: URL { rootDirectory.appending(path: "settings.json") }
     var runStateFile: URL { rootDirectory.appending(path: "run-state.json") }
     var latestTranscriptFile: URL { rootDirectory.appending(path: "latest-run.log") }
+    var activityFile: URL { rootDirectory.appending(path: "activity.json") }
 
     func createDirectories(fileManager: FileManager = .default) throws {
         try fileManager.createDirectory(at: rootDirectory, withIntermediateDirectories: true)

@@ -35,6 +35,35 @@ struct SyncDomainTests {
         #expect(evaluator.status(validationError: "No rclone", isRunning: true, latestRun: failed, now: now, awakeSince: awake) == .disabled(reason: "No rclone"))
     }
 
+    @Test func activityLogMergesRepeatedSkipsAndKeepsTheLatestEntries() {
+        let start = Date(timeIntervalSinceReferenceDate: 0)
+        func skip(_ reason: SkipReason, at minutes: Double) -> SyncActivity {
+            SyncActivity(trigger: .scheduled, outcome: .skipped(reason), startedAt: start + minutes * 60, finishedAt: start + minutes * 60)
+        }
+        var log = ActivityLog()
+
+        log.record(skip(.lowDataNetwork, at: 0))
+        log.record(skip(.lowDataNetwork, at: 10))
+        log.record(skip(.lowDataNetwork, at: 20))
+        #expect(log.entries.count == 1)
+        #expect(log.entries[0].startedAt == start)
+        #expect(log.entries[0].finishedAt == start + 20 * 60)
+        #expect(log.consecutiveSkips(for: .lowDataNetwork) == 3)
+        #expect(log.consecutiveSkips(for: .previousSyncRunning) == 0)
+
+        log.record(skip(.previousSyncRunning, at: 30))
+        log.record(skip(.lowDataNetwork, at: 40))
+        #expect(log.entries.count == 3)
+        #expect(log.consecutiveSkips(for: .lowDataNetwork) == 1)
+
+        for minute in 0..<ActivityLog.capacity {
+            log.record(SyncActivity(trigger: .syncNow, outcome: .succeeded, startedAt: start + Double(minute), finishedAt: start + Double(minute)))
+        }
+        #expect(log.entries.count == ActivityLog.capacity)
+        #expect(log.entries.first?.outcome == .succeeded)
+        #expect(log.entries.last?.startedAt == start + Double(ActivityLog.capacity - 1))
+    }
+
     @Test func transcriptStoreReturnsOnlyLatestThirtyLines() throws {
         let file = FileManager.default.temporaryDirectory.appending(path: "onedrive-rclone-transcript-\(UUID().uuidString).log")
         defer { try? FileManager.default.removeItem(at: file) }

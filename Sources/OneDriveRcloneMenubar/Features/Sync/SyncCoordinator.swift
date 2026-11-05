@@ -9,6 +9,7 @@ final class SyncCoordinator: ObservableObject {
     @Published private(set) var transcriptLines: [String] = []
     @Published private(set) var loginWarning: String?
     @Published private(set) var persistenceWarning: String?
+    @Published private(set) var activity = ActivityLog()
 
     private let paths: AppPaths
     private let runner: any RcloneRunning
@@ -17,6 +18,7 @@ final class SyncCoordinator: ObservableObject {
     private let checkScheduler: any RepeatingScheduler
     private let loginItem: any LoginItemControlling
     private let rcloneCandidates: [String]
+    private let isOnLowDataNetwork: @MainActor () -> Bool
     private let now: @MainActor () -> Date
     private var settings: SyncSettings?
     private var remoteValidationError: String?
@@ -29,9 +31,10 @@ final class SyncCoordinator: ObservableObject {
     private var settingsStore: JSONFileStore<SyncSettings> { JSONFileStore(fileURL: paths.settingsFile) }
     private var runStateStore: JSONFileStore<SyncRunRecord> { JSONFileStore(fileURL: paths.runStateFile) }
     private var transcriptStore: TranscriptStore { TranscriptStore(fileURL: paths.latestTranscriptFile) }
+    private var activityStore: JSONFileStore<ActivityLog> { JSONFileStore(fileURL: paths.activityFile) }
 
     /// The defaults are the real dependencies; tests pass fakes so that no rclone
-    /// process, timer, login item, rclone installation, or wall-clock time is involved.
+    /// process, timer, login item, rclone installation, network, or wall-clock time is involved.
     init(
         paths: AppPaths = AppPaths(),
         runner: any RcloneRunning = RcloneProcessRunner(),
@@ -41,6 +44,7 @@ final class SyncCoordinator: ObservableObject {
         wakeNotifications: NotificationCenter = NSWorkspace.shared.notificationCenter,
         loginItem: any LoginItemControlling = LoginItemManager(),
         rcloneCandidates: [String] = SyncSettings.rcloneCandidates(),
+        isOnLowDataNetwork: @escaping @MainActor () -> Bool = { NetworkMonitor.shared.isLowDataNetwork },
         now: @escaping @MainActor () -> Date = Date.init,
         awakeSince: Date = SystemWakeTime.current()
     ) {
@@ -50,6 +54,7 @@ final class SyncCoordinator: ObservableObject {
         self.checkScheduler = checkScheduler
         self.loginItem = loginItem
         self.rcloneCandidates = rcloneCandidates
+        self.isOnLowDataNetwork = isOnLowDataNetwork
         self.now = now
         self.awakeSince = awakeSince
         wakeNotifications.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -70,6 +75,8 @@ final class SyncCoordinator: ObservableObject {
             if try settingsStore.load() == nil { try settingsStore.save(.initialTemplate) }
             latestRun = try runStateStore.load()
             transcriptLines = transcriptStore.displayLines()
+            // History is informational, so an unreadable file starts a new one.
+            activity = (try? activityStore.load()) ?? ActivityLog()
             loginItem.registerIfNeeded()
         } catch {
             status = .disabled(reason: error.localizedDescription)
@@ -117,13 +124,13 @@ final class SyncCoordinator: ObservableObject {
         } catch {
             settings = nil
             validatedConfiguration = nil
-            stopScheduledSyncs()
+            scheduleSyncs(every: nil)
             status = .disabled(reason: "settings.json could not be read: \(error.localizedDescription)")
             return
         }
+        scheduleSyncs(every: settings?.intervalSeconds)
         guard let settings else {
             validatedConfiguration = nil
-            stopScheduledSyncs()
             refreshStatus()
             return
         }
@@ -139,37 +146,69 @@ final class SyncCoordinator: ObservableObject {
 
     private func applyValidation(_ validation: String?, snapshot: ConfigurationSnapshot?) {
         remoteValidationError = validation
-        guard validation == nil, let settings else {
-            validatedConfiguration = nil
-            stopScheduledSyncs()
-            return
-        }
-        validatedConfiguration = snapshot
-        guard scheduledInterval != settings.intervalSeconds else { return }
-        scheduledInterval = settings.intervalSeconds
-        scheduler.start(interval: settings.intervalSeconds) { [weak self] in await self?.run(.sync) }
+        validatedConfiguration = validation == nil ? snapshot : nil
     }
 
-    private func stopScheduledSyncs() {
-        scheduler.stop()
-        scheduledInterval = nil
+    /// The schedule keeps firing while the configuration is unusable, so each
+    /// scheduled sync that cannot run is recorded with the reason.
+    private func scheduleSyncs(every interval: TimeInterval?) {
+        let interval = interval.flatMap { $0 > 0 ? $0 : nil } ?? SyncSettings.initialTemplate.intervalSeconds
+        guard scheduledInterval != interval else { return }
+        scheduledInterval = interval
+        scheduler.start(interval: interval) { [weak self] in await self?.runScheduledSync() }
+    }
+
+    private var configurationProblem: String? {
+        guard let settings else { return "No settings" }
+        return remoteValidationError ?? settings.configurationError()
+    }
+
+    /// What the schedule does when it fires: starts a sync, or records why it did not.
+    /// Only scheduled syncs avoid low-data networks; Sync Now always runs.
+    func runScheduledSync() async {
+        if running { return recordSkip(.previousSyncRunning) }
+        if configurationProblem != nil { return recordConfigurationSkip() }
+        if isOnLowDataNetwork() { return recordSkip(.lowDataNetwork) }
+        await run(.sync, scheduled: true)
+    }
+
+    /// A configuration that has never synced still needs setup; one that has synced
+    /// before has stopped working.
+    private func recordConfigurationSkip() {
+        recordSkip(latestRun == nil ? .setupRequired : .configurationUnusable)
+    }
+
+    private func recordSkip(_ reason: SkipReason) {
+        let at = now()
+        recordActivity(SyncActivity(trigger: .scheduled, outcome: .skipped(reason), startedAt: at, finishedAt: at))
+    }
+
+    private func recordActivity(_ entry: SyncActivity) {
+        activity.record(entry)
+        do {
+            try activityStore.save(activity)
+        } catch {
+            persistenceWarning = joinedWarning(persistenceWarning, "Recent activity could not be saved: \(error.localizedDescription)")
+        }
     }
 
     /// Runs rclone unless a run is already in progress. Scheduled runs, Sync Now,
     /// and Resync all go through here, so only one rclone process runs at a time.
-    func run(_ kind: RcloneProcessRunner.RunKind) async {
+    func run(_ kind: RcloneProcessRunner.RunKind, scheduled: Bool = false) async {
         guard !running else { return }
         guard let settings else { return }
+        let trigger: SyncActivity.Trigger = scheduled ? .scheduled : kind == .resync ? .resync : .syncNow
         running = true
         refreshStatus()
         if let availabilityError = settings.availabilityError() {
-            finishUnavailableRun(reason: availabilityError)
+            finishUnavailableRun(reason: availabilityError, trigger: trigger)
             return
         }
         if let validation = await runner.validate(settings) {
             running = false
             applyValidation(validation, snapshot: nil)
             status = .disabled(reason: validation)
+            if scheduled { recordConfigurationSkip() }
             return
         }
         applyValidation(nil, snapshot: ConfigurationSnapshot(settings: settings))
@@ -197,11 +236,12 @@ final class SyncCoordinator: ObservableObject {
             persistenceWarning = joinedWarning(persistenceWarning, "The latest run state could not be saved: \(error.localizedDescription)")
         }
         transcriptLines = result.lines
+        recordActivity(SyncActivity(trigger: trigger, outcome: failureReason.map { SyncActivity.Outcome.failed(reason: $0) } ?? .succeeded, startedAt: startedAt, finishedAt: finishedAt))
         running = false
         status = evaluatedStatus(validationError: nil)
     }
 
-    private func finishUnavailableRun(reason: String) {
+    private func finishUnavailableRun(reason: String, trigger: SyncActivity.Trigger) {
         let finishedAt = now()
         let record = SyncRunRecord(
             startedAt: finishedAt,
@@ -220,6 +260,7 @@ final class SyncCoordinator: ObservableObject {
         } catch {
             persistenceWarning = "The failed run could not be fully saved: \(error.localizedDescription)"
         }
+        recordActivity(SyncActivity(trigger: trigger, outcome: .failed(reason: reason), startedAt: finishedAt, finishedAt: finishedAt))
         running = false
         status = .unhealthy(reason: reason)
     }

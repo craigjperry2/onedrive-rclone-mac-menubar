@@ -15,6 +15,10 @@ struct MenuBarView: View {
                 Text("Last successful sync: \(lastSuccess.formatted(date: .abbreviated, time: .shortened))")
             }
             if let reason = coordinator.status.reason { lines(reason) }
+            if let skip = coordinator.activity.entries.last, skip.outcome == .skipped(.lowDataNetwork) {
+                Text("Scheduled syncs paused on a low-data network")
+                Text("Skipped \(skip.count == 1 ? "1 sync" : "\(skip.count) syncs") since \(skip.startedAt.formatted(date: .omitted, time: .shortened))")
+            }
             if coordinator.isRunning { Text("rclone is running…") }
 
             Menu(latestRunTitle) {

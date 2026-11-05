@@ -25,6 +25,62 @@ struct SyncCoordinatorTests {
         await scheduled.value
         #expect(await harness.runner.runs == [.sync])
         #expect(!harness.coordinator.isRunning)
+        #expect(harness.coordinator.activity.entries.map(\.outcome) == [.skipped(.previousSyncRunning), .succeeded])
+    }
+
+    @Test func completedScheduledSyncIsRecordedAndRestored() async throws {
+        let harness = try Harness()
+        await harness.coordinator.load()
+        await harness.runner.holdNextRun()
+        let startedAt = harness.clock.now
+
+        let scheduled = Task { await harness.scheduler.fire() }
+        await harness.runner.waitForRuns(1)
+        harness.clock.advance(by: 4 * 60)
+        await harness.runner.releaseHeldRun()
+        await scheduled.value
+
+        let expected = SyncActivity(trigger: .scheduled, outcome: .succeeded, startedAt: startedAt, finishedAt: startedAt + 4 * 60)
+        #expect(harness.coordinator.activity.entries == [expected])
+        let restarted = harness.makeCoordinator()
+        await restarted.load()
+        #expect(restarted.activity.entries == [expected])
+    }
+
+    @Test func lowDataNetworkSkipsScheduledSyncsUntilTheNetworkIsNormal() async throws {
+        let harness = try Harness()
+        await harness.coordinator.load()
+        harness.network.isLowData = true
+
+        await harness.scheduler.fire()
+        let firstSkip = harness.clock.now
+        harness.clock.advance(by: 600)
+        await harness.scheduler.fire()
+
+        #expect(await harness.runner.runs.isEmpty)
+        let skip = try #require(harness.coordinator.activity.entries.last)
+        #expect(skip.outcome == .skipped(.lowDataNetwork))
+        #expect(skip.startedAt == firstSkip)
+        #expect(skip.finishedAt == harness.clock.now)
+        #expect(harness.coordinator.activity.consecutiveSkips(for: .lowDataNetwork) == 2)
+
+        harness.network.isLowData = false
+        await harness.scheduler.fire()
+
+        #expect(await harness.runner.runs == [.sync])
+        #expect(harness.coordinator.activity.entries.last?.outcome == .succeeded)
+        #expect(harness.coordinator.activity.consecutiveSkips(for: .lowDataNetwork) == 0)
+    }
+
+    @Test func syncNowRunsOnALowDataNetwork() async throws {
+        let harness = try Harness()
+        await harness.coordinator.load()
+        harness.network.isLowData = true
+
+        await harness.coordinator.run(.sync)
+
+        #expect(await harness.runner.runs == [.sync])
+        #expect(harness.coordinator.activity.entries.map(\.trigger) == [.syncNow])
     }
 
     @Test func scheduledRunsNeverResync() async throws {
@@ -88,7 +144,10 @@ struct SyncCoordinatorTests {
         let saved = try JSONFileStore<SyncSettings>(fileURL: harness.paths.settingsFile).load()
         #expect(saved == .initialTemplate)
         #expect(harness.coordinator.status == .disabled(reason: SyncSettings.rcloneRequired))
-        #expect(!harness.scheduler.isStarted)
+
+        await harness.scheduler.fire()
+        #expect(await harness.runner.runs.isEmpty)
+        #expect(harness.coordinator.activity.entries.map(\.outcome) == [.skipped(.setupRequired)])
     }
 
     @Test func fixedConfigurationIsPickedUpWithoutARestart() async throws {
@@ -97,7 +156,8 @@ struct SyncCoordinatorTests {
         await harness.coordinator.load()
         #expect(harness.coordinator.status == .disabled(reason: "The configured OneDrive remote was not found."))
         #expect(!harness.coordinator.canStartSync)
-        #expect(!harness.scheduler.isStarted)
+        await harness.scheduler.fire()
+        #expect(await harness.runner.runs.isEmpty)
 
         await harness.runner.setValidationError(nil)
         await harness.checkScheduler.fire()
@@ -111,7 +171,7 @@ struct SyncCoordinatorTests {
     @Test func configurationThatBreaksLaterDisablesScheduledSyncs() async throws {
         let harness = try Harness()
         await harness.coordinator.load()
-        #expect(harness.scheduler.isStarted)
+        await harness.scheduler.fire()
 
         var settings = harness.settings
         settings.remoteName = "renamed"
@@ -120,8 +180,9 @@ struct SyncCoordinatorTests {
         await harness.checkScheduler.fire()
 
         #expect(harness.coordinator.status == .disabled(reason: "The configured OneDrive remote was not found."))
-        #expect(!harness.scheduler.isStarted)
-        #expect(await harness.runner.runs.isEmpty)
+        await harness.scheduler.fire()
+        #expect(await harness.runner.runs == [.sync])
+        #expect(harness.coordinator.activity.entries.map(\.outcome) == [.succeeded, .skipped(.configurationUnusable)])
     }
 
     @Test func rcloneIsFoundWithoutAPathInSettings() async throws {
@@ -175,6 +236,7 @@ private final class Harness {
     let wakeNotifications = NotificationCenter()
     let clock = TestClock()
     let loginItem = FakeLoginItem()
+    let network = FakeNetwork()
     var rcloneCandidates: [String] = []
     let awakeSince: Date
     private(set) var coordinator: SyncCoordinator!
@@ -201,6 +263,7 @@ private final class Harness {
             wakeNotifications: wakeNotifications,
             loginItem: loginItem,
             rcloneCandidates: rcloneCandidates,
+            isOnLowDataNetwork: { [network] in network.isLowData },
             now: { [clock] in clock.now },
             awakeSince: awakeSince
         )
@@ -217,6 +280,11 @@ private final class FakeLoginItem: LoginItemControlling {
 }
 
 @MainActor
+private final class FakeNetwork {
+    var isLowData = false
+}
+
+@MainActor
 private final class TestClock {
     var now = Date(timeIntervalSinceReferenceDate: 800_000_000)
     func advance(by interval: TimeInterval) { now += interval }
@@ -225,7 +293,6 @@ private final class TestClock {
 @MainActor
 private final class ManualScheduler: RepeatingScheduler {
     private var action: (@MainActor () async -> Void)?
-    var isStarted: Bool { action != nil }
 
     func start(interval: TimeInterval, action: @escaping @MainActor () async -> Void) { self.action = action }
     func stop() { action = nil }
