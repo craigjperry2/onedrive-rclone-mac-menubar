@@ -58,6 +58,16 @@ struct PersistedFormatTests {
         #expect(log.entries[4].finishedAt == Date(timeIntervalSinceReferenceDate: 800_003_000))
     }
 
+    /// From the release that notifies when syncing works again (#29).
+    @Test func activityWithANotifiedProblemDecodes() throws {
+        let json = #"{"entries":[{"trigger":"scheduled","outcome":{"failed":{"reason":"Bisync aborted"}},"startedAt":800001200,"finishedAt":800001260,"count":1}],"problemNotified":true}"#
+
+        let log = try JSONDecoder().decode(ActivityLog.self, from: Data(json.utf8))
+
+        #expect(log.problemNotified == true)
+        #expect(log.entries.map(\.outcome) == [.failed(reason: "Bisync aborted")])
+    }
+
     /// What the app writes now must also be what it reads back.
     @Test func currentFormatsRoundTrip() throws {
         let date = Date(timeIntervalSinceReferenceDate: 800_000_000.5)
@@ -65,6 +75,7 @@ struct PersistedFormatTests {
         log.record(SyncActivity(trigger: .scheduled, outcome: .failed(reason: "multi\nline"), startedAt: date, finishedAt: date))
         log.record(SyncActivity(trigger: .scheduled, outcome: .skipped(.lowDataNetwork), startedAt: date, finishedAt: date + 600))
         log.record(SyncActivity(trigger: .scheduled, outcome: .skipped(.lowDataNetwork), startedAt: date + 600, finishedAt: date + 1200))
+        log.problemNotified = true
         let record = SyncRunRecord(startedAt: date, finishedAt: date, outcome: .failure, failureReason: nil, lastSuccessAt: nil)
 
         #expect(try JSONDecoder().decode(ActivityLog.self, from: JSONEncoder().encode(log)) == log)

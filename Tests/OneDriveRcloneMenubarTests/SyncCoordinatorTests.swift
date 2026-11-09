@@ -215,37 +215,58 @@ struct SyncCoordinatorTests {
         #expect(harness.loginItem.registrations == 1)
     }
 
-    @Test func scheduledFailureNotifiesOnceUntilASyncSucceeds() async throws {
+    @Test func scheduledFailureNotifiesOnceThenOnceMoreWhenSyncingWorksAgainEvenAfterARestart() async throws {
         let harness = try Harness()
         await harness.coordinator.load()
         await harness.runner.setExitCode(7, lastLine: "Bisync aborted")
+        let failedAt = harness.clock.now
 
         await harness.scheduler.fire()
+        harness.clock.advance(by: 600)
         await harness.scheduler.fire()
-        #expect(harness.notifier.posted == [.syncFailed(at: harness.clock.now)])
-        let posted = try #require(harness.notifier.posted.first)
-        #expect(posted.title == "OneDrive sync needs attention")
-        #expect(posted.body.contains("OneDrive sync"))
-        #expect(posted.body.contains("review recent activity"))
+        let failure = SyncNotification.syncFailed(reason: "Bisync aborted", transcriptLines: ["Bisync aborted"], at: failedAt)
+        #expect(harness.notifier.posted == [failure])
+        #expect(failure.title == "OneDrive sync needs attention")
 
+        let restarted = harness.makeCoordinator()
+        await restarted.load()
         await harness.runner.setExitCode(0)
+        await restarted.run(.sync)
         await harness.scheduler.fire()
-        #expect(harness.notifier.posted.count == 1)
+        #expect(harness.notifier.posted == [failure, .syncRecovered])
+        #expect(SyncNotification.syncRecovered.title == "OneDrive sync is working again")
 
-        await harness.runner.setExitCode(7)
+        await harness.runner.setExitCode(7, lastLine: "Bisync aborted")
         await harness.scheduler.fire()
-        #expect(harness.notifier.posted.count == 2)
+        #expect(harness.notifier.posted.count == 3)
     }
 
-    @Test func manualFailuresDoNotNotify() async throws {
+    @Test func failuresThatDidNotNotifyGetNoRecoveryNotice() async throws {
         let harness = try Harness()
         await harness.coordinator.load()
         await harness.runner.setExitCode(7)
 
         await harness.coordinator.run(.sync)
         await harness.coordinator.run(.resync)
+        harness.network.isLowData = true
+        await harness.scheduler.fire()
+        harness.network.isLowData = false
+        await harness.runner.setExitCode(0)
+        await harness.scheduler.fire()
 
+        #expect(harness.coordinator.activity.entries.last?.outcome == .succeeded)
         #expect(harness.notifier.posted.isEmpty)
+    }
+
+    @Test func notificationSyncNowButtonRunsAnOrdinarySync() async throws {
+        let harness = try Harness()
+        await harness.coordinator.load()
+
+        harness.notifier.choose(.syncNow)
+
+        try await waitUntil { await harness.runner.runs.count == 1 && !harness.coordinator.isRunning }
+        #expect(await harness.runner.runs == [.sync])
+        #expect(harness.coordinator.activity.entries.map(\.trigger) == [.syncNow])
     }
 
     @Test func unusableConfigurationNotifiesOnceButMissingSetupDoesNot() async throws {
@@ -380,9 +401,17 @@ final class FakeLoginItem: LoginItemControlling {
 @MainActor
 final class FakeNotifier: SyncNotifying {
     private(set) var posted: [SyncNotification] = []
+    private var syncNow: (@MainActor () -> Void)?
 
-    func requestAuthorization() {}
+    func start(syncNow: @escaping @MainActor () -> Void) { self.syncNow = syncNow }
     func post(_ notification: SyncNotification) { posted.append(notification) }
+    /// What clicking a notification's button does.
+    func choose(_ action: SyncNotification.Action) {
+        switch action {
+        case .syncNow: syncNow?()
+        case .showLog: break
+        }
+    }
 }
 
 @MainActor

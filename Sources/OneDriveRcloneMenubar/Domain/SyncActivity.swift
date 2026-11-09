@@ -76,6 +76,10 @@ struct ActivityLog: Codable, Equatable, Sendable {
     static let capacity = 100
 
     private(set) var entries: [SyncActivity] = []
+    /// Whether the user was notified of a problem that no sync has succeeded since,
+    /// so the next success tells them it is fixed, even after a restart. Optional
+    /// so that activity.json from earlier versions still decodes.
+    var problemNotified: Bool?
 
     mutating func record(_ activity: SyncActivity) {
         if case .skipped = activity.outcome, var last = entries.last, last.outcome == activity.outcome {

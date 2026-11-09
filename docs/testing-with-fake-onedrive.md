@@ -53,3 +53,13 @@ Synthetic clicks open the status item's menu and select its items. Install `clic
 - The Resync confirmation is an ordinary window, so you can click its **Resync** button. Cancel is the default button.
 - Do not use `osascript` with System Events UI scripting: its accessibility queries hang on the Satellite.
 - `mac_read_file` and `mac_download` sometimes report "No such file or directory" for a file that was just written; retry once. Use a new file name for each screenshot and pass paths under `/private/tmp` rather than `/tmp`, because reusing a path can return an earlier image.
+
+## Notifications (Amp macOS Satellite)
+
+On the Satellite, notifications need three things before they appear:
+
+- Notification Center's launch agent is not loaded. Load it with `launchctl bootstrap gui/$(id -u) /System/Library/LaunchAgents/com.apple.notificationcenterui.plist`.
+- macOS refuses notifications to an unsigned app, so ad-hoc sign the build with `codesign --force --deep -s - .build/xcode/Build/Products/Debug/OneDriveRcloneMenubar.app` before launching it.
+- Turn on **Allow notifications** for OneDriveRcloneMenubar in System Settings > Notifications. Choose the Persistent alert style so a notification stays on screen for screenshots.
+
+To see a failure notification, set `intervalSeconds` to 30 in `settings.json`, delete `~/onedrive-fake/remote/RCLONE_TEST` after a successful sync, and wait for the next scheduled sync. Hover over the notification to see its buttons; two buttons appear under **Options**. Put the file back to see the "working again" notification. A notification that `chmod 000 ~/onedrive-fake/remote` causes offers Sync Now.

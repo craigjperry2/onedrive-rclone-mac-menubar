@@ -82,7 +82,7 @@ final class SyncCoordinator: ObservableObject {
             // History is informational, so an unreadable file starts a new one.
             activity = (try? activityStore.load()) ?? ActivityLog()
             loginItem.registerIfNeeded()
-            notifier.requestAuthorization()
+            notifier.start { [weak self] in self?.syncNow() }
         } catch {
             status = .disabled(reason: error.localizedDescription)
         }
@@ -226,26 +226,29 @@ final class SyncCoordinator: ObservableObject {
     private func recordActivity(_ entry: SyncActivity) {
         let previousRunFailed = activity.entries.last { !$0.isSkip }.map { $0.outcome != .succeeded } ?? false
         activity.record(entry)
+        let notification = notification(for: entry, previousRunFailed: previousRunFailed)
+        if let notification { activity.problemNotified = notification != .syncRecovered }
         do {
             try activityStore.save(activity)
         } catch {
             persistenceWarning = joinedWarning(persistenceWarning, "Recent activity could not be saved: \(error.localizedDescription)")
         }
-        if entry.trigger == .scheduled, let notification = notification(for: entry, previousRunFailed: previousRunFailed) {
-            notifier.post(notification)
-        }
+        if let notification { notifier.post(notification) }
     }
 
     /// Only problems with scheduled syncs notify, since the user is watching when they
     /// choose Sync Now or Resync. Each problem notifies once when it starts, not on
     /// every scheduled sync while it lasts, and a single low-data skip stays quiet.
+    /// The first sync of any kind to succeed after a notified problem says so once.
     private func notification(for entry: SyncActivity, previousRunFailed: Bool) -> SyncNotification? {
-        switch entry.outcome {
-        case .failed where !previousRunFailed:
-            .syncFailed(at: entry.startedAt)
-        case .skipped(.configurationUnusable) where activity.consecutiveSkips(for: .configurationUnusable) == 1:
+        switch (entry.trigger, entry.outcome) {
+        case (_, .succeeded) where activity.problemNotified == true:
+            .syncRecovered
+        case (.scheduled, .failed(let reason)) where !previousRunFailed:
+            .syncFailed(reason: reason, transcriptLines: transcriptLines, at: entry.startedAt)
+        case (.scheduled, .skipped(.configurationUnusable)) where activity.consecutiveSkips(for: .configurationUnusable) == 1:
             .configurationUnusable(configurationProblem ?? SkipReason.configurationUnusable.explanation)
-        case .skipped(.lowDataNetwork) where activity.consecutiveSkips(for: .lowDataNetwork) == Self.lowDataSkipsBeforeNotifying:
+        case (.scheduled, .skipped(.lowDataNetwork)) where activity.consecutiveSkips(for: .lowDataNetwork) == Self.lowDataSkipsBeforeNotifying:
             .lowDataNetwork(skips: Self.lowDataSkipsBeforeNotifying)
         default:
             nil
