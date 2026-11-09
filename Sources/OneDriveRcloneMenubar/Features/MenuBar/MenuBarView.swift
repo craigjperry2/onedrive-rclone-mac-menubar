@@ -20,9 +20,13 @@ struct MenuBarView: View {
                 Button("Open Login Items Settings…", action: LoginItemManager.openSystemSettings)
             }
             if let persistenceWarning = coordinator.persistenceWarning { Text(persistenceWarning) }
-            if let lastSuccess = coordinator.latestRun?.lastSuccessAt {
-                Text("Last successful sync: \(lastSuccess.formatted(date: .abbreviated, time: .shortened))")
-            }
+            if let syncTimes = Self.syncTimes(
+                status: coordinator.status,
+                latestRun: coordinator.latestRun,
+                nextScheduledSync: coordinator.nextScheduledSync,
+                onLowDataNetwork: coordinator.isOnLowDataNetworkNow,
+                now: Date()
+            ) { lines(syncTimes) }
             if case .disabled(let reason) = coordinator.status { lines(reason) }
             if let skip = coordinator.activity.entries.last, skip.outcome == .skipped(.lowDataNetwork) {
                 Text("Skipped \(skip.count == 1 ? "1 sync" : "\(skip.count) syncs") since \(skip.startedAt.formatted(date: .omitted, time: .shortened))")
@@ -40,7 +44,7 @@ struct MenuBarView: View {
                     }
                 }
             }
-            Menu(latestRunTitle) {
+            Menu("Run Output") {
                 let output = RunOutput(lines: coordinator.transcriptLines)
                 if let headline = Self.latestRunHeadline(coordinator.latestRun, output: output) {
                     Text(headline)
@@ -94,7 +98,7 @@ struct MenuBarView: View {
             case .recreateCheckFile: "Every sync fails until it is back."
             case .reconnectDrive: "Syncing resumes when the drive is connected again."
             case .signInAgain: "Every sync fails until rclone signs in again."
-            case .tryAgain: "Choose Sync Now to try again.\nLatest run shows what rclone reported."
+            case .tryAgain: "Choose Sync Now to try again.\nRun Output shows what rclone reported."
             }
         }
 
@@ -158,11 +162,53 @@ struct MenuBarView: View {
         return (title, message)
     }
 
-    /// The first row of Latest run. rclone logs nothing about a successful run except
+    /// The first row of Run Output. rclone logs nothing about a successful run except
     /// its stats, so success gets a summary rather than looking like no run happened.
     static func latestRunHeadline(_ latestRun: SyncRunRecord?, output: RunOutput) -> String? {
         if latestRun?.outcome == .success { return output.successSummary }
         return output.errorLines.isEmpty && output.otherLines.isEmpty ? "No run output yet" : nil
+    }
+
+    /// How long ago the folder last synced and when the schedule syncs next. The
+    /// times are relative, worked out each time the menu opens; Recent Activity keeps
+    /// the absolute times. After a failure, or when syncs have stopped working, the
+    /// last success is the last good sync, which shows how urgent the problem is.
+    /// The next sync is shown only while scheduled syncs can run: Syncing, Disabled,
+    /// and Paused until the drive is reconnected already say why they cannot.
+    static func syncTimes(status: SyncStatus, latestRun: SyncRunRecord?, nextScheduledSync: Date?, onLowDataNetwork: Bool, now: Date) -> String? {
+        var rows: [String] = []
+        if let lastSuccess = latestRun?.lastSuccessAt {
+            let upToDate = switch status {
+            case .healthy, .running, .paused(.lowDataNetwork): latestRun?.outcome == .success
+            case .waitingForFirstSync, .paused(.retrying), .paused(.volumeUnavailable), .unhealthy, .disabled: false
+            }
+            let ago = relative(now.timeIntervalSince(lastSuccess)).map { "\($0) ago" } ?? "just now"
+            rows.append("\(upToDate ? "Synced" : "Last good sync") \(ago)")
+        }
+        switch status {
+        case .healthy, .unhealthy, .waitingForFirstSync, .paused(.retrying), .paused(.lowDataNetwork):
+            guard let nextScheduledSync else { break }
+            if onLowDataNetwork {
+                // Paused on a low-data network already says so in its headline.
+                if status != .paused(.lowDataNetwork) { rows.append("Next scheduled sync will be skipped: low-data network") }
+            } else {
+                let next = relative(nextScheduledSync.timeIntervalSince(now)) ?? "under a minute"
+                if rows.isEmpty { rows.append("Next sync in \(next)") } else { rows[0] += " · next sync in \(next)" }
+            }
+        case .running, .disabled, .paused(.volumeUnavailable):
+            break
+        }
+        return rows.isEmpty ? nil : rows.joined(separator: "\n")
+    }
+
+    /// A rough duration, rounded down, or nil for under a minute.
+    private static func relative(_ interval: TimeInterval) -> String? {
+        let minutes = Int(max(0, interval) / 60)
+        if minutes == 0 { return nil }
+        if minutes < 60 { return "\(minutes) min" }
+        if minutes < 24 * 60 { return "\(minutes / 60) h" }
+        let days = minutes / (24 * 60)
+        return days == 1 ? "1 day" : "\(days) days"
     }
 
     /// Menu rows are single lines, so messages put each short line in its own row.
@@ -226,10 +272,5 @@ struct MenuBarView: View {
         }
         guard let build = info?["CFBundleVersion"] as? String, build != version else { return "Version \(version)" }
         return "Version \(version) (\(build))"
-    }
-
-    private var latestRunTitle: String {
-        guard let latestRun = coordinator.latestRun else { return "Latest run: none" }
-        return "Latest run: \(latestRun.finishedAt.formatted(date: .abbreviated, time: .shortened))"
     }
 }

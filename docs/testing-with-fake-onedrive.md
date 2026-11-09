@@ -28,7 +28,7 @@ It also writes `RCLONE_TEST` to both sides, which the app's `--check-access` req
 2. Choose **Resync…** and confirm. bisync needs one resync before ordinary runs; until then, **Sync Now** fails with "Needs attention: rclone lost track of the last sync" and the icon becomes a warning triangle. After the resync, `hello-from-fake-onedrive.txt` appears in `local/` and the icon becomes a check mark (Healthy).
 3. Change a file on either side, choose **Sync Now**, and check that it appears on the other side.
 
-The app writes its state to `~/Library/Application Support/OneDriveRcloneMenubar/`: `run-state.json` records each run's `outcome`, and `latest-run.log` holds rclone's output, which after a successful run is only the final stats that the app asks rclone to log; **Latest run** summarises them, such as "Succeeded: copied 1 file". To start again from nothing, quit the app, delete `~/onedrive-fake`, `run-state.json`, `latest-run.log`, and `~/Library/Caches/rclone/bisync`, then rerun the script.
+The app writes its state to `~/Library/Application Support/OneDriveRcloneMenubar/`: `run-state.json` records each run's `outcome`, and `latest-run.log` holds rclone's output, which after a successful run is only the final stats that the app asks rclone to log; **Run Output** summarises them, such as "Succeeded: copied 1 file". To start again from nothing, quit the app, delete `~/onedrive-fake`, `run-state.json`, `latest-run.log`, and `~/Library/Caches/rclone/bisync`, then rerun the script.
 
 ## Guided setup
 

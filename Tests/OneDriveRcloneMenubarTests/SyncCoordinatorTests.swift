@@ -315,6 +315,40 @@ struct SyncCoordinatorTests {
         harness.wakeNotifications.post(name: NSWorkspace.didWakeNotification, object: nil)
         #expect(harness.coordinator.status == .waitingForFirstSync)
     }
+
+    @Test func menuSaysWhenTheFolderLastSyncedAndWhenTheScheduleSyncsNext() async throws {
+        let harness = try Harness()
+        await harness.coordinator.load()
+        // The one-minute configuration check is not a sync.
+        harness.checkScheduler.nextFireDate = harness.clock.now + 50
+        func syncTimes() -> String? {
+            let coordinator = harness.coordinator!
+            return MenuBarView.syncTimes(
+                status: coordinator.status,
+                latestRun: coordinator.latestRun,
+                nextScheduledSync: coordinator.nextScheduledSync,
+                onLowDataNetwork: coordinator.isOnLowDataNetworkNow,
+                now: harness.clock.now
+            )
+        }
+        harness.scheduler.nextFireDate = harness.clock.now + 600
+        #expect(syncTimes() == "Next sync in 10 min")
+
+        await harness.scheduler.fire()
+        harness.scheduler.nextFireDate = harness.clock.now + 600
+        harness.clock.advance(by: 4 * 60 + 10)
+        #expect(syncTimes() == "Synced 4 min ago · next sync in 5 min")
+
+        harness.network.isLowData = true
+        #expect(syncTimes() == "Synced 4 min ago\nNext scheduled sync will be skipped: low-data network")
+
+        harness.network.isLowData = false
+        await harness.runner.setExitCode(1, lastLine: "Failed to bisync")
+        harness.clock.advance(by: 2 * 3600)
+        await harness.coordinator.run(.sync)
+        harness.scheduler.nextFireDate = harness.clock.now + 300
+        #expect(syncTimes() == "Last good sync 2 h ago · next sync in 5 min")
+    }
 }
 
 @MainActor
@@ -429,9 +463,11 @@ final class TestClock {
 final class ManualScheduler: RepeatingScheduler {
     private var action: (@MainActor () async -> Void)?
     private(set) var interval: TimeInterval?
+    /// Tests set when the schedule next fires; it does not move on its own.
+    var nextFireDate: Date?
 
     func start(interval: TimeInterval, action: @escaping @MainActor () async -> Void) { self.interval = interval; self.action = action }
-    func stop() { action = nil; interval = nil }
+    func stop() { action = nil; interval = nil; nextFireDate = nil }
     func fire() async { await action?() }
 }
 
