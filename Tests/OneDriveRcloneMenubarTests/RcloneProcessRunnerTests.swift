@@ -97,9 +97,20 @@ struct RcloneProcessRunnerTests {
 
         #expect(result.exitCode == 2)
         #expect(result.lines.count == 30)
-        #expect(result.failureReason == "ERROR : Bisync critical error: final line without newline")
+        #expect(result.failureReason == "Bisync critical error: final line without newline")
         #expect(try Data(contentsOf: transcript).count <= TranscriptStore.maximumStoredBytes)
         #expect(TranscriptStore(fileURL: transcript).displayLines() == result.lines)
+    }
+
+    /// The reason names the problem from all of rclone's output, not its generic last line.
+    @Test func failureReasonNamesTheProblem() async throws {
+        let output = RcloneOutput.checkFileMissingOnOneDrive.joined(separator: "\n")
+        let settings = try settings(rclone: "#!/bin/sh\ncat <<'OUTPUT'\n\(output)\nOUTPUT\nexit 7\n")
+
+        let result = await RcloneProcessRunner().run(.sync, settings: settings, transcriptURL: transcript)
+
+        #expect(result.lines.last == "2026/11/09 21:26:30 NOTICE: Failed to bisync: bisync aborted")
+        #expect(result.failureReason == "The RCLONE_TEST check file is missing from OneDrive")
     }
 
     /// rclone 1.75 colours bisync's messages even when its output is a pipe.
@@ -171,7 +182,7 @@ struct RcloneProcessRunnerTests {
 
         let failure = await RcloneProcessRunner().authorize(settings) { _ in }
 
-        #expect(failure == "ERROR: Failed to create onedrive remote: failed to get token: access_denied")
+        #expect(failure == "Failed to create onedrive remote: failed to get token: access_denied")
     }
 
     @Test func remoteCheckFileIsCreatedAtTheRootOfTheRemote() async throws {

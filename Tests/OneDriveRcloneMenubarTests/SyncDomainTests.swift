@@ -106,6 +106,53 @@ struct SyncDomainTests {
         #expect(lines.last == "35")
     }
 
+    @Test(arguments: [
+        (RcloneOutput.needsResync, .needsResync),
+        (["2026/11/09 10:00:00 ERROR : Bisync aborted. Must run --resync to recover.", "2026/11/09 10:00:00 NOTICE: Failed to bisync: bisync aborted"], .needsResync),
+        (RcloneOutput.checkFileMissingOnOneDrive, .checkFileMissing(.oneDrive)),
+        (RcloneOutput.checkFileMissingLocally, .checkFileMissing(.localFolder)),
+        (["2026/11/09 10:00:00 ERROR : Access test failed: Path1 count 0, Path2 count 0 - RCLONE_TEST"], .checkFileMissing(.both)),
+        (RcloneOutput.signInExpired, .signInExpired),
+        (RcloneOutput.tooManyDeletes, .tooManyDeletes),
+        (RcloneOutput.unreachableDNS, .oneDriveUnreachable),
+        (RcloneOutput.unreachableConnectionRefused, .oneDriveUnreachable),
+        // An expired token that cannot be refreshed while offline is a network problem, not a sign-in problem.
+        (RcloneOutput.unreachableDuringTokenRefresh, .oneDriveUnreachable),
+    ] as [([String], SyncProblem)])
+    func knownRcloneFailuresAreNamed(output: [String], problem: SyncProblem) {
+        #expect(SyncProblem(rcloneOutput: output) == problem)
+    }
+
+    @Test func differentProblemsHaveDifferentNames() {
+        let problems: [SyncProblem] = [.needsResync, .checkFileMissing(.oneDrive), .checkFileMissing(.localFolder), .checkFileMissing(.both), .signInExpired, .tooManyDeletes, .oneDriveUnreachable]
+
+        #expect(Set(problems.map(\.name)).count == problems.count)
+    }
+
+    @Test(arguments: [
+        // The first ERROR line, not the generic abort lines after it.
+        ([
+            "2026/11/09 10:00:00 NOTICE: bisync is IN BETA. Don't use in production!",
+            "2026/11/09 10:00:01 ERROR : \u{1B}[31mBisync critical error: path1 and path2 are the same\u{1B}[0m",
+            "2026/11/09 10:00:01 ERROR : \u{1B}[33mBisync aborted. Error is retryable without --resync due to --resilient mode.\u{1B}[0m",
+            "2026/11/09 10:00:01 NOTICE: Failed to bisync: bisync aborted",
+        ], "Bisync critical error: path1 and path2 are the same"),
+        (["2026/11/09 21:30:24 CRITICAL: Failed to create file system for \"onedrive:\": didn't find section in config file (\"onedrive\")"], "Failed to create file system for \"onedrive:\": didn't find section in config file (\"onedrive\")"),
+        // bisync lists changed files in NOTICE lines; a file name is not a diagnosis.
+        (["2026/11/09 10:00:00 NOTICE: - Path1    File is new    - notes/connection refused.txt", "2026/11/09 10:00:01 ERROR : Bisync critical error: something new"], "Bisync critical error: something new"),
+        // Without an ERROR line, the last line that says anything.
+        (["2026/11/09 10:00:01 NOTICE: Failed to bisync: bisync aborted", ""], "Failed to bisync: bisync aborted"),
+        (["rclone reported a failure"], "rclone reported a failure"),
+    ] as [([String], String)])
+    func unknownFailuresShowTheFirstErrorWithoutTimestampOrColour(output: [String], reason: String) {
+        #expect(SyncProblem(rcloneOutput: output) == .unrecognized(reason))
+    }
+
+    @Test(arguments: [[], [""], ["", " "]] as [[String]])
+    func noOutputNamesNoProblem(output: [String]) {
+        #expect(SyncProblem(rcloneOutput: output) == nil)
+    }
+
     @Test func blankExecutableLeavesSettingsDisabled() {
         #expect(SyncSettings.initialTemplate.configurationError() == SyncSettings.rcloneRequired)
     }
@@ -272,6 +319,58 @@ struct SyncDomainTests {
         let now = Date()
         #expect(SystemWakeTime.current(now: now) <= now)
     }
+}
+
+/// Real output of rclone 1.75.2 on macOS, run with the app's bisync arguments
+/// against the fake OneDrive (docs/testing-with-fake-onedrive.md), or against a
+/// onedrive remote with a made-up token for the sign-in and network failures.
+enum RcloneOutput {
+    /// Sync Now before the first Resync.
+    static let needsResync = [
+        "2026/11/09 21:26:30 ERROR : \u{1B}[31mBisync critical error: cannot find prior Path1 or Path2 listings, likely due to critical error on prior run ",
+        "\u{1B}[35mTip: here are the filenames we were looking for. Do they exist? ",
+        "\u{1B}[0m\u{1B}[36mPath1: \u{1B}[94m/Users/runner/Library/Caches/rclone/bisync/Users_runner_onedrive-fake_remote..Users_runner_onedrive-fake_local.path1.lst\u{1B}[0m",
+        "\u{1B}[0m\u{1B}[36mPath2: \u{1B}[94m/Users/runner/Library/Caches/rclone/bisync/Users_runner_onedrive-fake_remote..Users_runner_onedrive-fake_local.path2.lst\u{1B}[0m",
+        "\u{1B}[0m\u{1B}[35mTry running this command to inspect the work dir: ",
+        "\u{1B}[0m\u{1B}[96mrclone lsl \"/Users/runner/Library/Caches/rclone/bisync\"\u{1B}[0m\u{1B}[0m",
+        "2026/11/09 21:26:30 ERROR : \u{1B}[33mBisync aborted. Error is retryable without --resync due to --resilient mode.\u{1B}[0m",
+        "2026/11/09 21:26:30 NOTICE: Failed to bisync: bisync aborted",
+    ]
+    /// RCLONE_TEST deleted from the fake OneDrive after a successful sync.
+    static let checkFileMissingOnOneDrive = [
+        "2026/11/09 21:26:30 ERROR : Access test failed: Path1 count 0, Path2 count 1 - RCLONE_TEST",
+        "2026/11/09 21:26:30 ERROR : - \u{1B}[34m\u{1B}[0m         \u{1B}[35mAccess test failed: Path2 file not found in Path1\u{1B}[0m - \u{1B}[36mRCLONE_TEST\u{1B}[0m",
+        "2026/11/09 21:26:30 ERROR : \u{1B}[31mBisync critical error: check file check failed\u{1B}[0m",
+        "2026/11/09 21:26:30 ERROR : \u{1B}[33mBisync aborted. Error is retryable without --resync due to --resilient mode.\u{1B}[0m",
+        "2026/11/09 21:26:30 NOTICE: Failed to bisync: bisync aborted",
+    ]
+    /// RCLONE_TEST deleted from the local folder after a successful sync.
+    static let checkFileMissingLocally = [
+        "2026/11/09 21:26:30 ERROR : Access test failed: Path1 count 1, Path2 count 0 - RCLONE_TEST",
+        "2026/11/09 21:26:30 ERROR : - \u{1B}[34m\u{1B}[0m         \u{1B}[35mAccess test failed: Path1 file not found in Path2\u{1B}[0m - \u{1B}[36mRCLONE_TEST\u{1B}[0m",
+        "2026/11/09 21:26:30 ERROR : \u{1B}[31mBisync critical error: check file check failed\u{1B}[0m",
+        "2026/11/09 21:26:30 ERROR : \u{1B}[33mBisync aborted. Error is retryable without --resync due to --resilient mode.\u{1B}[0m",
+        "2026/11/09 21:26:30 NOTICE: Failed to bisync: bisync aborted",
+    ]
+    /// 6 of 8 files deleted from the fake OneDrive, over bisync's default --max-delete of 50%.
+    static let tooManyDeletes = [
+        "2026/11/09 21:26:35 ERROR : Safety abort: too many deletes (>50%, 6 of 8) on Path1 \"/Users/runner/onedrive-fake/remote/\". Run with --force if desired.",
+        "2026/11/09 21:26:35 NOTICE: \u{1B}[31mBisync aborted. Please try again.\u{1B}[0m",
+        "2026/11/09 21:26:35 NOTICE: Failed to bisync: too many deletes",
+    ]
+    /// An expired access token whose refresh token Microsoft rejected.
+    static let signInExpired = [
+        "2026/11/09 21:26:55 CRITICAL: Failed to create file system for \"onedrive:\": failed to get root: Get \"https://graph.microsoft.com/v1.0/drives/0123456789abcdef/root\": couldn't fetch token: invalid_grant: maybe token expired? - try refreshing with \"rclone config reconnect onedrive{HkZ8H}:\"",
+    ]
+    static let unreachableDNS = [
+        "2026/11/09 21:26:55 CRITICAL: Failed to create file system for \"onedrive:\": failed to get root: Get \"https://graph.microsoft.com/v1.0/drives/0123456789abcdef/root\": proxyconnect tcp: dial tcp: lookup proxy.invalid: no such host",
+    ]
+    static let unreachableConnectionRefused = [
+        "2026/11/09 21:26:55 CRITICAL: Failed to create file system for \"onedrive:\": failed to get root: Get \"https://graph.microsoft.com/v1.0/drives/0123456789abcdef/root\": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection refused",
+    ]
+    static let unreachableDuringTokenRefresh = [
+        "2026/11/09 21:28:02 CRITICAL: Failed to create file system for \"onedrive:\": failed to get root: Get \"https://graph.microsoft.com/v1.0/drives/0123456789abcdef/root\": couldn't fetch token: Post \"https://login.microsoftonline.com/common/oauth2/v2.0/token\": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection refused",
+    ]
 }
 
 /// Writes a shell script that stands in for rclone and returns its location.
