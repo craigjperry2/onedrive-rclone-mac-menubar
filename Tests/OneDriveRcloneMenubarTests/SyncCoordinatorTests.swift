@@ -326,6 +326,20 @@ final class Harness {
 
     deinit { try? FileManager.default.removeItem(at: root) }
 
+    /// Edits settings.json as a person or another app version would.
+    func saveSettings(_ change: (inout SyncSettings) -> Void) throws {
+        let store = JSONFileStore<SyncSettings>(fileURL: paths.settingsFile)
+        var updated = try store.load() ?? settings
+        change(&updated)
+        try store.save(updated)
+    }
+
+    /// Puts an executable at `path`, as installing rclone there would.
+    @discardableResult
+    func installRclone(at path: String) throws -> String {
+        try makeExecutableScript("#!/bin/sh\n", at: URL(filePath: path)).path(percentEncoded: false)
+    }
+
     func makeCoordinator() -> SyncCoordinator {
         SyncCoordinator(
             paths: paths,
@@ -374,9 +388,10 @@ final class TestClock {
 @MainActor
 final class ManualScheduler: RepeatingScheduler {
     private var action: (@MainActor () async -> Void)?
+    private(set) var interval: TimeInterval?
 
-    func start(interval: TimeInterval, action: @escaping @MainActor () async -> Void) { self.action = action }
-    func stop() { action = nil }
+    func start(interval: TimeInterval, action: @escaping @MainActor () async -> Void) { self.interval = interval; self.action = action }
+    func stop() { action = nil; interval = nil }
     func fire() async { await action?() }
 }
 
@@ -429,9 +444,12 @@ actor FakeRcloneRunner: RcloneRunning {
 
     var isWaitingForAuthorization: Bool { authorization != nil }
 
+    private var remoteCheckFileFailure: String?
+    func setRemoteCheckFileFailure(_ failure: String?) { remoteCheckFileFailure = failure }
+
     func createRemoteCheckFile(_ settings: SyncSettings) async -> String? {
         remoteCheckFiles += 1
-        return nil
+        return remoteCheckFileFailure
     }
 
     func validate(_ settings: SyncSettings) async -> String? {

@@ -30,18 +30,37 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: scripts/test-next-version.sh
 
+  # Evaluates the nix-darwin module as users configure it. Needs no Mac.
+  nix-module:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - run: nix eval --json ./nix/tests#moduleChecks
+
   test:
     runs-on: xcode-27
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: swift test
-      - name: Build the app bundle
-        run: >-
-          xcodebuild -project OneDriveRcloneMenubar.xcodeproj -scheme OneDriveRcloneMenubar
-          -configuration Release -derivedDataPath .build/xcode CODE_SIGNING_ALLOWED=NO build
+
+      # The same build, zip, and Nix package as a release, then the installed
+      # app is launched and checked against a fake OneDrive.
+      - name: Build and zip the app
+        id: build
+        run: echo "hash=$(scripts/build-release.sh 0.0.0 | tail -n 1)" >> "$GITHUB_OUTPUT"
+
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+
+      - name: Install the zip with the Nix package and smoke test the app
+        env:
+          HASH: ${{ steps.build.outputs.hash }}
+        run: |
+          app="$(scripts/check-nix-package.sh 0.0.0 "$HASH" | tail -n 1)"
+          RCLONE="$(nix build --no-link --print-out-paths 'nixpkgs#rclone^out')/bin/rclone" scripts/smoke-test-app.sh "$app"
 
   release:
-    needs: [version-logic, test]
+    needs: [version-logic, nix-module, test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: xcode-27
     environment: release
@@ -75,12 +94,14 @@ jobs:
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
         if: steps.version.outputs.skip != 'true'
 
-      - name: Check the Nix package installs the zip
+      - name: Check the Nix package installs the zip and the app works
         if: steps.version.outputs.skip != 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
           HASH: ${{ steps.build.outputs.hash }}
-        run: scripts/check-nix-package.sh "$VERSION" "$HASH"
+        run: |
+          app="$(scripts/check-nix-package.sh "$VERSION" "$HASH" | tail -n 1)"
+          RCLONE="$(nix build --no-link --print-out-paths 'nixpkgs#rclone^out')/bin/rclone" scripts/smoke-test-app.sh "$app"
 
       - name: Publish the release
         if: steps.version.outputs.skip != 'true'

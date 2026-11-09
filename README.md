@@ -59,7 +59,7 @@ Use **Sync Now** for an ordinary immediate run. Use **Resync** only for initiali
 
 ## Development
 
-Run `swift test` to execute the tests. `SyncCoordinator` takes its rclone runner, schedulers, wake notifications, login-item registration, notifier, and clock as parameters, so its tests use fakes and never launch rclone or wait for real time.
+Run `swift test` to execute the tests. `SyncCoordinator` takes its rclone runner, schedulers, wake notifications, login-item registration, notifier, and clock as parameters, so its tests use fakes and never launch rclone or wait for real time. CI also evaluates the nix-darwin module and smoke tests the app as the Nix package installs it; [docs/testing-strategy.md](docs/testing-strategy.md) describes each kind of test and where a new one belongs.
 
 To exercise real syncs without OneDrive, run `scripts/setup-fake-onedrive.sh` on a test machine. It configures the app against a fake OneDrive made of local directories. With `--guided`, it leaves the app unconfigured and stands in for the Microsoft sign-in, so the whole guided setup can be run except the browser step; see [docs/testing-with-fake-onedrive.md](docs/testing-with-fake-onedrive.md).
 
