@@ -158,9 +158,83 @@ struct FailureScenarioTests {
         #expect(harness.coordinator.status == .unhealthy(reason: reason))
         #expect(harness.coordinator.latestRun?.outcome == .failure)
         #expect(harness.coordinator.transcriptLines == [reason])
+        #expect(MenuBarView.fix(for: harness.coordinator.status, transcriptLines: harness.coordinator.transcriptLines) == .reconnectDrive)
         #expect(TranscriptStore(fileURL: harness.paths.latestTranscriptFile).displayLines() == [reason])
         #expect(harness.coordinator.activity.entries.map(\.outcome) == [.failed(reason: reason)])
         #expect(harness.notifier.posted == [.syncFailed(at: harness.clock.now)])
+    }
+
+    // MARK: Fixes the menu offers
+
+    @Test func checkFileMissingOnOneDriveFailsEverySyncUntilTheOfferedFixRecreatesIt() async throws {
+        let harness = try Harness()
+        try await harness.prepareBisync()
+        await harness.coordinator.load()
+        await harness.coordinator.run(.resync)
+        #expect(harness.coordinator.status == .healthy(lastSuccess: harness.clock.now))
+
+        await harness.runner.deleteRemoteCheckFile()
+        await harness.coordinator.run(.sync)
+        await harness.scheduler.fire()
+
+        let fix = MenuBarView.fix(for: harness.coordinator.status, transcriptLines: harness.coordinator.transcriptLines)
+        #expect(fix == .recreateCheckFile(.oneDrive))
+        #expect(harness.coordinator.latestRun?.outcome == .failure)
+
+        harness.clock.advance(by: 60)
+        #expect(await harness.coordinator.recreateCheckFile(missingFrom: .oneDrive) == nil)
+
+        #expect(await harness.runner.remoteCheckFiles == 1)
+        #expect(await harness.runner.runs == [.resync, .sync, .sync, .sync])
+        #expect(harness.coordinator.status == .healthy(lastSuccess: harness.clock.now))
+    }
+
+    @Test func checkFileMissingFromTheFolderIsRecreatedThereWithoutTouchingOneDrive() async throws {
+        let harness = try Harness()
+        let checkFile = try await harness.prepareBisync()
+        await harness.coordinator.load()
+        await harness.coordinator.run(.resync)
+
+        try FileManager.default.removeItem(at: checkFile)
+        await harness.coordinator.run(.sync)
+        let fix = MenuBarView.fix(for: harness.coordinator.status, transcriptLines: harness.coordinator.transcriptLines)
+        #expect(fix == .recreateCheckFile(.localFolder))
+
+        harness.clock.advance(by: 60)
+        #expect(await harness.coordinator.recreateCheckFile(missingFrom: .localFolder) == nil)
+
+        #expect(FileManager.default.fileExists(atPath: checkFile.path(percentEncoded: false)))
+        #expect(await harness.runner.remoteCheckFiles == 0)
+        #expect(harness.coordinator.status == .healthy(lastSuccess: harness.clock.now))
+    }
+
+    /// A missing folder is a different problem, such as a renamed folder, so the fix
+    /// does not create an empty one for bisync to sync deletions from.
+    @Test func checkFileFixDoesNotRecreateAMissingFolder() async throws {
+        let harness = try Harness()
+        await harness.coordinator.load()
+
+        let failure = await harness.coordinator.recreateCheckFile(missingFrom: .localFolder)
+
+        #expect(failure?.hasPrefix("RCLONE_TEST could not be created in \(harness.settings.localPath):") == true)
+        #expect(!FileManager.default.fileExists(atPath: harness.settings.localPath))
+        #expect(await harness.runner.runs.isEmpty)
+    }
+
+    @Test func lostBisyncStateIsFixedByTheOfferedResync() async throws {
+        let harness = try Harness()
+        try await harness.prepareBisync()
+        await harness.coordinator.load()
+
+        await harness.coordinator.run(.sync)
+        #expect(MenuBarView.fix(for: harness.coordinator.status, transcriptLines: harness.coordinator.transcriptLines) == .resync)
+
+        await harness.coordinator.run(.resync)
+        harness.clock.advance(by: 60)
+        await harness.coordinator.run(.sync)
+
+        #expect(await harness.runner.runs == [.sync, .resync, .sync])
+        #expect(harness.coordinator.status == .healthy(lastSuccess: harness.clock.now))
     }
 
     // MARK: Files the app keeps

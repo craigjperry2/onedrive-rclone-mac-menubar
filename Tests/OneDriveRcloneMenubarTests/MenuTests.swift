@@ -5,37 +5,96 @@ import Testing
 /// Text and icons the menu shows that come from logic rather than layout.
 @MainActor
 struct MenuTests {
-    static let resyncAdvice = "rclone needs a resync to recover.\nChoose Resync… to run one."
-    static let retryAdvice = "Choose Sync Now to try again.\nLatest run shows what rclone reported."
-
     @Test(arguments: [
-        "2026/11/09 10:00:00 ERROR : Bisync aborted. Must run --resync to recover.",
-        "2026/11/09 10:00:00 ERROR : Bisync critical error: cannot find prior Path1 or Path2 listings, likely due to critical error on prior run",
-        "ERROR : MUST RUN --RESYNC TO RECOVER.",
+        RcloneOutput.needsResync,
+        ["2026/11/09 10:00:00 ERROR : Bisync aborted. Must run --resync to recover.", "2026/11/09 10:00:01 NOTICE: Failed to bisync: bisync aborted"],
     ])
-    func bisyncThatNeedsAResyncSaysSo(line: String) {
-        let transcript = ["2026/11/09 10:00:00 NOTICE: bisync is IN BETA.", line, "2026/11/09 10:00:01 Failed to bisync: bisync aborted"]
+    func bisyncThatNeedsAResyncOffersResync(output: [String]) {
+        let fix = MenuBarView.fix(for: .unhealthy(reason: "rclone lost track of the last sync"), transcriptLines: output)
 
-        #expect(MenuBarView.advice(for: .unhealthy(reason: "Failed to bisync"), transcriptLines: transcript) == Self.resyncAdvice)
+        #expect(fix == .resync)
+        #expect(fix?.actionTitle == "Resync…")
     }
 
-    @Test func bisyncWithoutItsPriorListingsSaysSo() {
-        #expect(MenuBarView.advice(for: .unhealthy(reason: "x"), transcriptLines: RcloneOutput.needsResync) == Self.resyncAdvice)
+    /// rclone calls these retryable, but every sync fails the same way until the
+    /// file is back, so the menu offers to recreate it on the side that lost it.
+    @Test(arguments: [
+        (RcloneOutput.checkFileMissingOnOneDrive, MenuBarView.Fix.recreateCheckFile(.oneDrive), "Recreate Check File on OneDrive…"),
+        (RcloneOutput.checkFileMissingLocally, .recreateCheckFile(.localFolder), "Recreate Check File in Your Folder…"),
+        (RcloneOutput.checkFileMissingOnBothSides, .recreateCheckFile(.both), "Recreate Check Files…"),
+        // rclone asks for a resync here, but it fails the same way until the file is back.
+        (RcloneOutput.resyncWithCheckFileMissingOnOneDrive, .recreateCheckFile(.oneDrive), "Recreate Check File on OneDrive…"),
+    ])
+    func missingCheckFileOffersToRecreateItInsteadOfRetrying(output: [String], expected: MenuBarView.Fix, action: String) {
+        let fix = MenuBarView.fix(for: .unhealthy(reason: "The RCLONE_TEST check file is missing"), transcriptLines: output)
+
+        #expect(fix == expected)
+        #expect(fix?.actionTitle == action)
+        #expect(fix?.advice == "Every sync fails until it is back.")
+    }
+
+    @Test func expiredSignInDoesNotSuggestSyncNowOrResync() {
+        let fix = MenuBarView.fix(for: .unhealthy(reason: "The OneDrive sign-in has expired"), transcriptLines: RcloneOutput.signInExpired)
+
+        #expect(fix == .signInAgain)
+        #expect(fix?.advice == "Every sync fails until rclone signs in again.")
+        #expect(fix?.actionTitle == nil)
     }
 
     @Test(arguments: [
+        RcloneOutput.unreachableDNS,
+        RcloneOutput.tooManyDeletes,
         // rclone mentions --resync here only to say it is not needed.
         ["ERROR : Bisync aborted. Error is retryable without --resync due to --resilient mode."],
-        ["ERROR : Failed to bisync: connection reset by peer"],
         [],
     ])
-    func otherFailuresSuggestTryingAgain(transcript: [String]) {
-        #expect(MenuBarView.advice(for: .unhealthy(reason: "x"), transcriptLines: transcript) == Self.retryAdvice)
+    func otherFailuresSuggestTryingAgainWithoutRecommendingResync(output: [String]) {
+        let fix = MenuBarView.fix(for: .unhealthy(reason: "x"), transcriptLines: output)
+
+        #expect(fix == .tryAgain)
+        #expect(fix?.advice == "Choose Sync Now to try again.\nLatest run shows what rclone reported.")
+        #expect(fix?.actionTitle == nil)
+    }
+
+    /// The output is from an earlier run, so it must not decide the fix while the
+    /// drive is unplugged: no run can start until it is back.
+    @Test func unpluggedDriveSaysSyncingResumesWithoutAnAction() {
+        let fix = MenuBarView.fix(for: .unhealthy(reason: SyncSettings.volumeUnavailable), transcriptLines: RcloneOutput.needsResync)
+
+        #expect(fix == .reconnectDrive)
+        #expect(fix?.advice == "Syncing resumes when the drive is connected again.")
+        #expect(fix?.actionTitle == nil)
     }
 
     @Test(arguments: [SyncStatus.healthy(lastSuccess: .now), .running, .waitingForFirstSync, .disabled(reason: "x")])
-    func onlyNeedsAttentionGivesAdvice(status: SyncStatus) {
-        #expect(MenuBarView.advice(for: status, transcriptLines: ["Must run --resync to recover."]) == nil)
+    func onlyNeedsAttentionOffersAFix(status: SyncStatus) {
+        #expect(MenuBarView.fix(for: status, transcriptLines: RcloneOutput.needsResync) == nil)
+    }
+
+    static let settings = SyncSettings(rcloneExecutablePath: "/opt/homebrew/bin/rclone", configPath: "/Users/craig/.config/rclone/rclone.conf", remoteName: "onedrive-work", localPath: "/Users/craig/OneDrive", intervalSeconds: 600)
+
+    /// The confirmation names the side that lost the file and warns that its
+    /// deletions spread to the other side once the check passes again.
+    @Test func checkFileConfirmationExplainsTheRiskForTheSideThatLostIt() {
+        let oneDrive = MenuBarView.checkFileConfirmation(missingFrom: .oneDrive, settings: Self.settings)
+        #expect(oneDrive.title == "Recreate the check file on OneDrive?")
+        #expect(oneDrive.message.contains("It is missing in OneDrive (onedrive-work:)."))
+        #expect(oneDrive.message.contains("rclone is connected to a different account or folder"))
+        #expect(oneDrive.message.contains("deletes them from /Users/craig/OneDrive too"))
+
+        let folder = MenuBarView.checkFileConfirmation(missingFrom: .localFolder, settings: Self.settings)
+        #expect(folder.title == "Recreate the check file in your folder?")
+        #expect(folder.message.contains("It is missing in /Users/craig/OneDrive."))
+        #expect(folder.message.contains("deletes them from OneDrive too"))
+    }
+
+    @Test func resyncConfirmationSaysWhyAndWhatItDoesHere() {
+        let suggested = MenuBarView.resyncConfirmation(suggested: true, settings: Self.settings)
+        #expect(suggested.hasPrefix("rclone lost its record of the last sync"))
+        #expect(suggested.contains("Resync makes OneDrive (onedrive-work:) and /Users/craig/OneDrive match."))
+
+        let unprompted = MenuBarView.resyncConfirmation(suggested: false, settings: Self.settings)
+        #expect(unprompted.hasPrefix("The latest sync does not need a resync."))
     }
 
     @Test(arguments: [
