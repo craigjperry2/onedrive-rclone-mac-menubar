@@ -172,9 +172,11 @@ struct SyncDomainTests {
         log.record(SyncActivity(trigger: .scheduled, outcome: .skipped(.lowDataNetwork), startedAt: at(9, 0), finishedAt: at(9, 0)))
         log.record(SyncActivity(trigger: .scheduled, outcome: .succeeded, startedAt: at(10, 0), finishedAt: at(10, 4)))
         log.record(SyncActivity(trigger: .scheduled, outcome: .failed(reason: "bisync aborted"), startedAt: at(14, 30), finishedAt: at(14, 31)))
+        log.record(SyncActivity(trigger: .syncNow, outcome: .stopped, startedAt: at(14, 40), finishedAt: at(14, 43)))
         let rows = log.recent.map { $0.summary(now: at(15, 0)) }
 
         #expect(rows == [
+            "Sync Now stopped by you at \(time(at(14, 43)))",
             "Scheduled sync needed attention at \(time(at(14, 31)))",
             "Scheduled sync succeeded at \(time(at(10, 4)))",
             "Scheduled sync skipped at \(time(at(9, 0))): low-data or metered network",

@@ -28,6 +28,89 @@ struct SyncCoordinatorTests {
         #expect(harness.coordinator.activity.entries.map(\.outcome) == [.skipped(.previousSyncRunning), .succeeded])
     }
 
+    @Test func stoppedSyncIsRecordedAsStoppedWithoutNeedingAttentionOrNotifying() async throws {
+        let harness = try Harness()
+        await harness.coordinator.load()
+        await harness.scheduler.fire()
+        let lastSuccess = harness.clock.now
+        let successfulRun = harness.coordinator.latestRun
+        harness.clock.advance(by: 10 * 60)
+        await harness.runner.holdNextRun()
+
+        let scheduled = Task { await harness.scheduler.fire() }
+        await harness.runner.waitForRuns(2)
+        let startedAt = harness.clock.now
+        #expect(harness.coordinator.runStartedAt == startedAt)
+        harness.clock.advance(by: 3 * 60)
+        harness.coordinator.stopSync()
+        #expect(harness.coordinator.isStopping)
+        await scheduled.value
+
+        #expect(await harness.runner.stoppedRuns == 1)
+        #expect(!harness.coordinator.isRunning)
+        #expect(!harness.coordinator.isStopping)
+        #expect(harness.coordinator.runStartedAt == nil)
+        #expect(harness.coordinator.canStartSync)
+        #expect(harness.coordinator.status == .healthy(lastSuccess: lastSuccess))
+        #expect(harness.coordinator.activity.entries.last == SyncActivity(trigger: .scheduled, outcome: .stopped, startedAt: startedAt, finishedAt: startedAt + 3 * 60))
+        #expect(harness.coordinator.latestRun == successfulRun)
+        #expect(harness.coordinator.transcriptLines.isEmpty)
+        #expect(harness.notifier.posted.isEmpty)
+        let restarted = harness.makeCoordinator()
+        await restarted.load()
+        #expect(restarted.status == .healthy(lastSuccess: lastSuccess))
+        #expect(restarted.activity.entries.last?.outcome == .stopped)
+
+        // A stop between a success and a failure does not hide the failure's notification.
+        await harness.runner.setExitCode(7, lastLine: "Bisync aborted")
+        await harness.scheduler.fire()
+        #expect(harness.notifier.posted == [.syncFailed(reason: "Bisync aborted", transcriptLines: ["Bisync aborted"], at: harness.clock.now)])
+    }
+
+    /// Stops `kind` part-way through, as choosing Stop Sync does.
+    private func stopRun(_ kind: RcloneProcessRunner.RunKind, in harness: Harness) async {
+        let runs = await harness.runner.runs.count
+        await harness.runner.holdNextRun()
+        let run = Task { await harness.coordinator.run(kind) }
+        await harness.runner.waitForRuns(runs + 1)
+        harness.coordinator.stopSync()
+        await run.value
+    }
+
+    @Test func stoppedResyncAfterAFirstFailureStillWillTryAgain() async throws {
+        let harness = try Harness()
+        await harness.coordinator.load()
+        await harness.scheduler.fire()
+        await harness.runner.setExitCode(1, lastLine: "Failed to bisync: connection reset by peer")
+        await harness.scheduler.fire()
+        let retrying = SyncStatus.paused(.retrying(failure: "Failed to bisync: connection reset by peer"))
+        #expect(harness.coordinator.status == retrying)
+
+        await stopRun(.resync, in: harness)
+
+        #expect(harness.coordinator.status == retrying)
+        #expect(harness.coordinator.activity.entries.last?.outcome == .stopped)
+    }
+
+    @Test func stoppedSyncKeepsTheDiagnosisAndFixOfTheRunBeforeIt() async throws {
+        let harness = try Harness()
+        await harness.runner.actLikeBisync()
+        await harness.coordinator.load()
+        await harness.scheduler.fire()
+        let needsResync = harness.coordinator.status
+        #expect(needsResync == .unhealthy(reason: "rclone lost track of the last sync"))
+
+        await stopRun(.sync, in: harness)
+
+        #expect(harness.coordinator.status == needsResync)
+        #expect(harness.coordinator.transcriptLines == RcloneOutput.needsResync)
+        #expect(MenuBarView.fix(for: harness.coordinator.status, transcriptLines: harness.coordinator.transcriptLines) == .resync)
+        let restarted = harness.makeCoordinator()
+        await restarted.load()
+        #expect(restarted.status == needsResync)
+        #expect(restarted.transcriptLines == RcloneOutput.needsResync)
+    }
+
     @Test func completedScheduledSyncIsRecordedAndRestored() async throws {
         let harness = try Harness()
         await harness.coordinator.load()
@@ -486,7 +569,10 @@ actor FakeRcloneRunner: RcloneRunning {
     private var hasListings = false
     private(set) var remoteHasCheckFile = true
     private var holdNext = false
-    private var held: CheckedContinuation<Void, Never>?
+    /// Resumed with true when the run is stopped, false when it is released.
+    private var held: CheckedContinuation<Bool, Never>?
+    /// Runs stopped by cancelling the calling task, as Stop Sync does.
+    private(set) var stoppedRuns = 0
     private var runWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
     func setValidationError(_ error: String?) { validationError = error }
@@ -497,9 +583,11 @@ actor FakeRcloneRunner: RcloneRunning {
     func actLikeBisync() { actsLikeBisync = true }
     func deleteRemoteCheckFile() { remoteHasCheckFile = false }
     func setOutput(_ lines: [String], exitCode code: Int32) { exitCode = code; output = lines }
-    /// Keeps the next run in progress until `releaseHeldRun()`; later runs finish at once.
+    /// Keeps the next run in progress until `releaseHeldRun()` or cancellation; later
+    /// runs finish at once.
     func holdNextRun() { holdNext = true }
-    func releaseHeldRun() { held?.resume(); held = nil }
+    func releaseHeldRun() { held?.resume(returning: false); held = nil }
+    private func stopHeldRun() { held?.resume(returning: true); held = nil }
 
     /// Returns once `count` runs have started, without polling or sleeping.
     func waitForRuns(_ count: Int) async {
@@ -550,7 +638,18 @@ actor FakeRcloneRunner: RcloneRunning {
         runWaiters.removeAll { $0.count <= runs.count }
         if holdNext {
             holdNext = false
-            await withCheckedContinuation { held = $0 }
+            // Like rclone after SIGTERM: bisync shuts down gracefully and exits 128 + 15.
+            let stopped = await withTaskCancellationHandler {
+                await withCheckedContinuation { held = $0 }
+            } onCancel: {
+                Task { await self.stopHeldRun() }
+            }
+            if stopped {
+                stoppedRuns += 1
+                let lines = ["NOTICE: Signal received: terminated", "NOTICE: Graceful shutdown completed successfully."]
+                try? Data(lines.map { $0 + "\n" }.joined().utf8).write(to: transcriptURL)
+                return RcloneProcessRunner.Result(exitCode: 143, lines: lines, failureReason: lines.last, persistenceWarning: nil)
+            }
         }
         let (exitCode, lines) = actsLikeBisync ? bisync(kind, localPath: settings.localPath) : (exitCode, output)
         // Like the real runner: each run replaces the transcript, the result has its last

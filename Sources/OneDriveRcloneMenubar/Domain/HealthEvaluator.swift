@@ -38,10 +38,11 @@ struct HealthEvaluator: Sendable {
         return .healthy(lastSuccess: success)
     }
 
-    /// Failed runs since the last success, not counting skips or an unmounted drive.
+    /// Failed runs since the last success, not counting skips, runs the user stopped,
+    /// or an unmounted drive.
     private static func failuresInARow(_ activity: ActivityLog) -> Int {
         activity.entries.reversed()
-            .filter { !$0.isSkip && $0.outcome != .failed(reason: SyncSettings.volumeUnavailable) }
+            .filter { !$0.isSkip && $0.outcome != .stopped && $0.outcome != .failed(reason: SyncSettings.volumeUnavailable) }
             .prefix { $0.outcome != .succeeded }
             .count
     }
@@ -49,7 +50,7 @@ struct HealthEvaluator: Sendable {
     /// Scheduled syncs never resync, so a failed resync stays failed, as does a run
     /// whose problem the next sync would hit again.
     private static func wontClearOnItsOwn(activity: ActivityLog, transcript: [String]) -> Bool {
-        if activity.entries.last(where: { !$0.isSkip })?.trigger == .resync { return true }
+        if activity.entries.last(where: { !$0.isSkip && $0.outcome != .stopped })?.trigger == .resync { return true }
         switch SyncProblem(rcloneOutput: transcript) {
         case .needsResync, .checkFileMissing, .signInExpired, .tooManyDeletes: return true
         case .oneDriveUnreachable, .unrecognized, nil: return false
