@@ -17,7 +17,7 @@ struct MenuBarView: View {
                 Text("Last successful sync: \(lastSuccess.formatted(date: .abbreviated, time: .shortened))")
             }
             if let reason = coordinator.status.reason { lines(reason) }
-            if let advice { lines(advice) }
+            if let advice = Self.advice(for: coordinator.status, transcriptLines: coordinator.transcriptLines) { lines(advice) }
             if let skip = coordinator.activity.entries.last, skip.outcome == .skipped(.lowDataNetwork) {
                 Text("Scheduled syncs paused on a low-data network")
                 Text("Skipped \(skip.count == 1 ? "1 sync" : "\(skip.count) syncs") since \(skip.startedAt.formatted(date: .omitted, time: .shortened))")
@@ -55,7 +55,7 @@ struct MenuBarView: View {
             Button("Sync Now", action: coordinator.syncNow).disabled(!coordinator.canStartSync)
             Button("Resync…", action: confirmResync).disabled(!coordinator.canStartSync)
             Divider()
-            Text(versionTitle)
+            Text(Self.versionTitle(info: Bundle.main.infoDictionary))
             Button("Quit OneDrive Sync") { NSApplication.shared.terminate(nil) }
                 .disabled(coordinator.isRunning)
         }
@@ -64,10 +64,10 @@ struct MenuBarView: View {
     /// What to do about Needs attention. Only a resync recovers when bisync says so,
     /// or when its listings from the last run are missing (it then still calls the
     /// error retryable under --resilient); anything else may pass on the next attempt.
-    private var advice: String? {
-        guard case .unhealthy = coordinator.status else { return nil }
+    static func advice(for status: SyncStatus, transcriptLines: [String]) -> String? {
+        guard case .unhealthy = status else { return nil }
         let needsResync = ["must run --resync", "cannot find prior Path1 or Path2 listings"]
-        if coordinator.transcriptLines.contains(where: { line in needsResync.contains { line.localizedCaseInsensitiveContains($0) } }) {
+        if transcriptLines.contains(where: { line in needsResync.contains { line.localizedCaseInsensitiveContains($0) } }) {
             return "rclone needs a resync to recover.\nChoose Resync… to run one."
         }
         return "Choose Sync Now to try again.\nLatest run shows what rclone reported."
@@ -93,8 +93,7 @@ struct MenuBarView: View {
 
     // Release builds get MARKETING_VERSION and CURRENT_PROJECT_VERSION from CI;
     // the project's 0.0.0 default and `swift run` (no bundle) mark local builds.
-    private var versionTitle: String {
-        let info = Bundle.main.infoDictionary
+    static func versionTitle(info: [String: Any]?) -> String {
         guard let version = info?["CFBundleShortVersionString"] as? String, version != "0.0.0" else {
             return "Development build"
         }

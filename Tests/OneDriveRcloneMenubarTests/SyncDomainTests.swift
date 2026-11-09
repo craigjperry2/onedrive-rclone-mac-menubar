@@ -272,13 +272,14 @@ struct SyncDomainTests {
         let now = Date()
         #expect(SystemWakeTime.current(now: now) <= now)
     }
+}
 
-    private func makeExecutableScript(_ contents: String) throws -> URL {
-        let url = FileManager.default.temporaryDirectory.appending(path: "onedrive-rclone-script-\(UUID().uuidString).sh")
-        try contents.write(to: url, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path())
-        return url
-    }
+/// Writes a shell script that stands in for rclone and returns its location.
+func makeExecutableScript(_ contents: String, at url: URL = FileManager.default.temporaryDirectory.appending(path: "onedrive-rclone-script-\(UUID().uuidString).sh")) throws -> URL {
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try contents.write(to: url, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path(percentEncoded: false))
+    return url
 }
 
 private final class LockedURL: @unchecked Sendable {

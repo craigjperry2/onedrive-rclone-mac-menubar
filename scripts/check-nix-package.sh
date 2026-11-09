@@ -2,7 +2,8 @@
 # Proves, before publishing, that nix/package.nix installs
 # dist/OneDriveRcloneMenubar-VERSION.zip under HASH. The zip goes into the Nix
 # store with the name and hash fetchurl would download it under, so the build
-# uses it without fetching the not-yet-published release URL.
+# uses it without fetching the not-yet-published release URL. Prints the
+# installed app's path on the last line of stdout.
 #
 # Usage: scripts/check-nix-package.sh VERSION HASH
 set -euo pipefail
@@ -22,4 +23,5 @@ if [[ "$installed_version" != "$version" ]]; then
   echo "Nix package installs version $installed_version, expected $version." >&2
   exit 1
 fi
-echo "Nix package installs $app"
+echo "Nix package installs $app" >&2
+echo "$app"
