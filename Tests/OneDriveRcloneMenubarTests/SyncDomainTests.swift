@@ -4,35 +4,132 @@ import Testing
 @testable import OneDriveRcloneMenubar
 
 struct SyncDomainTests {
-    @Test func failedRunIsUnhealthyImmediately() {
-        let now = Date.now
-        let run = SyncRunRecord(startedAt: now, finishedAt: now, outcome: .failure, failureReason: "Volume unavailable", lastSuccessAt: now.addingTimeInterval(-60))
+    // MARK: Health: Healthy, Paused, or Needs attention
 
-        #expect(HealthEvaluator().status(validationError: nil, isRunning: false, latestRun: run, now: now, awakeSince: now.addingTimeInterval(-100)) == .unhealthy(reason: "Volume unavailable"))
+    static let now = Date(timeIntervalSinceReferenceDate: 800_000_000)
+    static let connectionReset = "ERROR : Failed to bisync: connection reset by peer"
+
+    /// The status after `history`, one entry a minute up to now, with the latest run
+    /// as the last non-skip entry.
+    func health(
+        _ history: [(SyncActivity.Trigger, SyncActivity.Outcome)],
+        lastSuccessMinutesAgo: Double? = 10,
+        awakeMinutes: Double = 60,
+        volumeError: String? = nil,
+        transcript: [String] = [],
+        validationError: String? = nil,
+        isRunning: Bool = false
+    ) -> SyncStatus {
+        var log = ActivityLog()
+        for (index, (trigger, outcome)) in history.enumerated() {
+            let at = Self.now - Double(history.count - index) * 60
+            log.record(SyncActivity(trigger: trigger, outcome: outcome, startedAt: at, finishedAt: at))
+        }
+        let lastRun = history.last { if case .skipped = $0.1 { false } else { true } }
+        let latestRun = lastRun.map { _, outcome in
+            let failure: String? = if case .failed(let reason) = outcome { reason } else { nil }
+            return SyncRunRecord(startedAt: Self.now, finishedAt: Self.now, outcome: failure == nil ? .success : .failure, failureReason: failure, lastSuccessAt: lastSuccessMinutesAgo.map { Self.now - $0 * 60 })
+        }
+        return HealthEvaluator().status(
+            validationError: validationError,
+            volumeError: volumeError,
+            isRunning: isRunning,
+            latestRun: latestRun,
+            transcript: transcript,
+            activity: log,
+            now: Self.now,
+            awakeSince: Self.now - awakeMinutes * 60
+        )
+    }
+
+    /// AC1 of issue 26: skipped scheduled syncs are not a failure, however long they go on.
+    @Test func lowDataNetworkPausesWithoutNeedingAttention() {
+        let skips = Array(repeating: (SyncActivity.Trigger.scheduled, SyncActivity.Outcome.skipped(.lowDataNetwork)), count: 4)
+        let status = health([(.scheduled, .succeeded)] + skips, lastSuccessMinutesAgo: 40)
+
+        #expect(status == .paused(.lowDataNetwork))
+        #expect(status.title == "Paused on a low-data network")
+        #expect(status.symbolName == "wifi.exclamationmark")
+        // Without the skips, the same 40-minute gap needs attention.
+        #expect(health([(.scheduled, .succeeded)], lastSuccessMinutesAgo: 40) == .unhealthy(reason: "No successful sync completed in the last 25 minutes."))
+        // Sync Now on the low-data network ends the pause.
+        #expect(health([(.scheduled, .succeeded)] + skips + [(.syncNow, .succeeded)], lastSuccessMinutesAgo: 0) == .healthy(lastSuccess: Self.now))
+    }
+
+    /// AC2 of issue 26.
+    @Test func unmountedDrivePausesUntilItIsReconnected() {
+        let unmounted = Array(repeating: (SyncActivity.Trigger.scheduled, SyncActivity.Outcome.failed(reason: SyncSettings.volumeUnavailable)), count: 5)
+        let status = health([(.scheduled, .succeeded)] + unmounted, lastSuccessMinutesAgo: 60, volumeError: SyncSettings.volumeUnavailable)
+
+        #expect(status == .paused(.volumeUnavailable))
+        #expect(status.symbolName == "externaldrive.badge.xmark")
+        #expect(status.explanation?.contains("Syncing resumes when the drive is reconnected.") == true)
+        // Reconnected: the next scheduled sync runs, so nothing needs doing yet.
+        #expect(health([(.scheduled, .succeeded)] + unmounted, lastSuccessMinutesAgo: 60) == .paused(.retrying(failure: SyncSettings.volumeUnavailable)))
+        // Runs that found the drive missing do not count as failures in a row.
+        #expect(health([(.scheduled, .succeeded)] + unmounted + [(.scheduled, .failed(reason: Self.connectionReset))]) == .paused(.retrying(failure: Self.connectionReset)))
+    }
+
+    /// AC3 of issue 26: an unknown failure needs attention once it repeats or the
+    /// last success is older than 25 minutes, and only after 25 minutes awake.
+    @Test(arguments: [
+        ([.succeeded, .failed(reason: SyncDomainTests.connectionReset)], 10, 60, false),
+        ([.succeeded, .failed(reason: "first"), .failed(reason: SyncDomainTests.connectionReset)], 10, 60, true),
+        ([.failed(reason: "earlier"), .succeeded, .failed(reason: SyncDomainTests.connectionReset)], 10, 60, false),
+        ([.succeeded, .failed(reason: "first"), .skipped(.previousSyncRunning), .failed(reason: SyncDomainTests.connectionReset)], 10, 60, true),
+        ([.succeeded, .failed(reason: SyncDomainTests.connectionReset)], 26, 60, true),
+        ([.succeeded, .failed(reason: SyncDomainTests.connectionReset)], 26, 20, false),
+        ([.failed(reason: SyncDomainTests.connectionReset)], nil, 20, false),
+        ([.failed(reason: SyncDomainTests.connectionReset)], nil, 26, true),
+    ] as [([SyncActivity.Outcome], Double?, Double, Bool)])
+    func oneTransientFailureWaitsForTheNextSync(outcomes: [SyncActivity.Outcome], lastSuccessMinutesAgo: Double?, awakeMinutes: Double, needsAttention: Bool) {
+        let status = health(outcomes.map { (.scheduled, $0) }, lastSuccessMinutesAgo: lastSuccessMinutesAgo, awakeMinutes: awakeMinutes)
+
+        #expect(status == (needsAttention ? .unhealthy(reason: Self.connectionReset) : .paused(.retrying(failure: Self.connectionReset))))
+        #expect(status.reason == Self.connectionReset)
+    }
+
+    /// AC4 of issue 26: problems the next scheduled sync would hit again need
+    /// attention after one failure; others get one retry.
+    @Test(arguments: [
+        (RcloneOutput.needsResync, true),
+        (RcloneOutput.checkFileMissingOnOneDrive, true),
+        (RcloneOutput.checkFileMissingLocally, true),
+        (RcloneOutput.tooManyDeletes, true),
+        (RcloneOutput.signInExpired, true),
+        (RcloneOutput.unreachableDNS, false),
+        // rclone calls this retryable, and with no known cause it gets one retry.
+        (["2026/11/09 21:28:51 ERROR : \u{1B}[33mBisync aborted. Error is retryable without --resync due to --resilient mode.\u{1B}[0m", "2026/11/09 21:28:51 NOTICE: Failed to bisync: bisync aborted"], false),
+    ] as [([String], Bool)])
+    func failureThatWillNotClearNeedsAttentionAtOnce(transcript: [String], needsAttention: Bool) {
+        let reason = "The sync failed"
+        let status = health([(.scheduled, .succeeded), (.scheduled, .failed(reason: reason))], transcript: transcript)
+
+        #expect(status == (needsAttention ? .unhealthy(reason: reason) : .paused(.retrying(failure: reason))))
+    }
+
+    /// Scheduled syncs never resync, so nothing retries a failed one.
+    @Test func failedResyncNeedsAttentionAtOnce() {
+        #expect(health([(.resync, .failed(reason: Self.connectionReset))], lastSuccessMinutesAgo: nil, awakeMinutes: 1) == .unhealthy(reason: Self.connectionReset))
+        #expect(health([(.syncNow, .failed(reason: Self.connectionReset))], lastSuccessMinutesAgo: nil, awakeMinutes: 1) == .paused(.retrying(failure: Self.connectionReset)))
     }
 
     @Test func freshnessWaitsForWakeGracePeriod() {
-        let now = Date.now
-        let lastSuccess = now.addingTimeInterval(-1_800)
-        let run = SyncRunRecord(startedAt: now, finishedAt: now, outcome: .success, failureReason: nil, lastSuccessAt: lastSuccess)
-        let evaluator = HealthEvaluator()
-
-        #expect(evaluator.status(validationError: nil, isRunning: false, latestRun: run, now: now, awakeSince: now.addingTimeInterval(-60)) == .healthy(lastSuccess: lastSuccess))
-        #expect(evaluator.status(validationError: nil, isRunning: false, latestRun: run, now: now, awakeSince: now.addingTimeInterval(-1_800)) == .unhealthy(reason: "No successful sync completed in the last 25 minutes."))
+        #expect(health([(.scheduled, .succeeded)], lastSuccessMinutesAgo: 30, awakeMinutes: 1) == .healthy(lastSuccess: Self.now - 1_800))
+        #expect(health([(.scheduled, .succeeded)], lastSuccessMinutesAgo: 30, awakeMinutes: 30) == .unhealthy(reason: "No successful sync completed in the last 25 minutes."))
+        #expect(health([], lastSuccessMinutesAgo: nil, awakeMinutes: 1) == .waitingForFirstSync)
+        #expect(health([], lastSuccessMinutesAgo: nil, awakeMinutes: 30) == .unhealthy(reason: "No successful sync has completed yet."))
     }
 
-    @Test func runningTakesPrecedenceOverFailedStaleOrMissingSuccess() {
-        let now = Date.now
-        let awake = now.addingTimeInterval(-3_600)
-        let failed = SyncRunRecord(startedAt: now, finishedAt: now, outcome: .failure, failureReason: "Bisync aborted", lastSuccessAt: now.addingTimeInterval(-60))
-        let stale = SyncRunRecord(startedAt: now, finishedAt: now, outcome: .success, failureReason: nil, lastSuccessAt: now.addingTimeInterval(-1_800))
-        let evaluator = HealthEvaluator()
+    @Test func runningTakesPrecedenceOverPausedFailedStaleOrMissingSuccess() {
+        let failed: [(SyncActivity.Trigger, SyncActivity.Outcome)] = [(.scheduled, .failed(reason: "a")), (.scheduled, .failed(reason: "b"))]
 
-        #expect(evaluator.status(validationError: nil, isRunning: true, latestRun: failed, now: now, awakeSince: awake) == .running)
-        #expect(evaluator.status(validationError: nil, isRunning: true, latestRun: nil, now: now, awakeSince: now) == .running)
-        #expect(evaluator.status(validationError: nil, isRunning: true, latestRun: nil, now: now, awakeSince: awake) == .running)
-        #expect(evaluator.status(validationError: nil, isRunning: true, latestRun: stale, now: now, awakeSince: awake) == .running)
-        #expect(evaluator.status(validationError: "No rclone", isRunning: true, latestRun: failed, now: now, awakeSince: awake) == .disabled(reason: "No rclone"))
+        #expect(health(failed, isRunning: true) == .running)
+        #expect(health([], lastSuccessMinutesAgo: nil, isRunning: true) == .running)
+        #expect(health([(.scheduled, .succeeded)], lastSuccessMinutesAgo: 30, isRunning: true) == .running)
+        #expect(health([(.scheduled, .skipped(.lowDataNetwork))], isRunning: true) == .running)
+        #expect(health([], volumeError: SyncSettings.volumeUnavailable, isRunning: true) == .running)
+        #expect(health(failed, volumeError: SyncSettings.volumeUnavailable, validationError: "No rclone", isRunning: true) == .disabled(reason: "No rclone"))
     }
 
     @Test func activityLogMergesRepeatedSkipsAndKeepsTheLatestEntries() {

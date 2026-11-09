@@ -128,13 +128,7 @@ final class SyncCoordinator: ObservableObject {
             status = .disabled(reason: "No valid rclone configuration was found.")
             return
         }
-        if let validation = remoteValidationError ?? settings.configurationError() {
-            status = evaluatedStatus(validationError: validation)
-        } else if let availabilityError = settings.availabilityError() {
-            status = .unhealthy(reason: availabilityError)
-        } else {
-            status = evaluatedStatus(validationError: nil)
-        }
+        status = evaluatedStatus(validationError: remoteValidationError ?? settings.configurationError())
     }
 
     /// Rereads settings.json and revalidates the rclone configuration, so fixing
@@ -208,7 +202,10 @@ final class SyncCoordinator: ObservableObject {
     func runScheduledSync() async {
         if running { return recordSkip(.previousSyncRunning) }
         if configurationProblem != nil { return recordConfigurationSkip() }
-        if isOnLowDataNetwork() { return recordSkip(.lowDataNetwork) }
+        if isOnLowDataNetwork() {
+            recordSkip(.lowDataNetwork)
+            return refreshStatus()
+        }
         await run(.sync, scheduled: true)
     }
 
@@ -327,14 +324,17 @@ final class SyncCoordinator: ObservableObject {
         }
         recordActivity(SyncActivity(trigger: trigger, outcome: .failed(reason: reason), startedAt: finishedAt, finishedAt: finishedAt))
         running = false
-        status = .unhealthy(reason: reason)
+        status = evaluatedStatus(validationError: nil)
     }
 
     private func evaluatedStatus(validationError: String?) -> SyncStatus {
         evaluator.status(
             validationError: validationError,
+            volumeError: settings?.availabilityError(),
             isRunning: running,
             latestRun: latestRun,
+            transcript: transcriptLines,
+            activity: activity,
             now: now(),
             awakeSince: awakeSince
         )

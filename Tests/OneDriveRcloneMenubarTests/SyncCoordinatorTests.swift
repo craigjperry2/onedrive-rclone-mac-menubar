@@ -94,14 +94,14 @@ struct SyncCoordinatorTests {
         #expect(await harness.runner.runs == [.sync, .sync])
     }
 
-    @Test func failedRunNeedsAttentionAndSuccessfulRunRecordsLastSuccess() async throws {
+    @Test func failedRunWillTryAgainAndSuccessfulRunRecordsLastSuccess() async throws {
         let harness = try Harness()
         await harness.coordinator.load()
         #expect(harness.coordinator.status == .waitingForFirstSync)
 
         await harness.runner.setExitCode(7, lastLine: "Bisync aborted")
         await harness.coordinator.run(.sync)
-        #expect(harness.coordinator.status == .unhealthy(reason: "Bisync aborted"))
+        #expect(harness.coordinator.status == .paused(.retrying(failure: "Bisync aborted")))
         #expect(harness.coordinator.latestRun?.outcome == .failure)
         #expect(harness.coordinator.latestRun?.lastSuccessAt == nil)
 

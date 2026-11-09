@@ -66,7 +66,7 @@ struct MenuTests {
         #expect(fix?.actionTitle == nil)
     }
 
-    @Test(arguments: [SyncStatus.healthy(lastSuccess: .now), .running, .waitingForFirstSync, .disabled(reason: "x")])
+    @Test(arguments: [SyncStatus.healthy(lastSuccess: .now), .running, .waitingForFirstSync, .paused(.retrying(failure: "x")), .paused(.lowDataNetwork), .paused(.volumeUnavailable), .disabled(reason: "x")])
     func onlyNeedsAttentionOffersAFix(status: SyncStatus) {
         #expect(MenuBarView.fix(for: status, transcriptLines: RcloneOutput.needsResync) == nil)
     }
@@ -108,7 +108,11 @@ struct MenuTests {
         #expect(SyncStatus.unhealthy(reason: reason).headline == headline)
     }
 
-    @Test(arguments: [SyncStatus.healthy(lastSuccess: .now), .running, .waitingForFirstSync, .disabled(reason: "x")])
+    @Test func willTryAgainNamesTheFailureInTheFirstRow() {
+        #expect(SyncStatus.paused(.retrying(failure: "OneDrive cannot be reached")).headline == "Will try again: OneDrive cannot be reached")
+    }
+
+    @Test(arguments: [SyncStatus.healthy(lastSuccess: .now), .running, .waitingForFirstSync, .paused(.lowDataNetwork), .paused(.volumeUnavailable), .disabled(reason: "x")])
     func otherStatesKeepTheirTitleAsTheFirstRow(status: SyncStatus) {
         #expect(status.headline == status.title)
     }
@@ -128,7 +132,7 @@ struct MenuTests {
     @Test func everyStatusHasItsOwnMenuBarIcon() {
         let symbols = SyncStatus.legend.map(\.symbolName)
 
-        #expect(Set(symbols).count == 5)
+        #expect(Set(symbols).count == 8)
         for symbol in symbols {
             #expect(NSImage(systemSymbolName: symbol, accessibilityDescription: nil) != nil, "\(symbol) is not an SF Symbol")
         }

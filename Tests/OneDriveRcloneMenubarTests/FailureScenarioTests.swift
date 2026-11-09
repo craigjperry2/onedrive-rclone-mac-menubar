@@ -114,7 +114,7 @@ struct FailureScenarioTests {
 
         await harness.coordinator.run(.sync)
 
-        #expect(harness.coordinator.status == .unhealthy(reason: "rclone exited with status 3."))
+        #expect(harness.coordinator.status == .paused(.retrying(failure: "rclone exited with status 3.")))
         #expect(harness.coordinator.canStartSync)
     }
 
@@ -122,6 +122,7 @@ struct FailureScenarioTests {
         let harness = try Harness()
         await harness.coordinator.load()
         await harness.runner.setExitCode(7, lastLine: "Bisync aborted")
+        await harness.scheduler.fire()
         await harness.scheduler.fire()
 
         let restarted = harness.makeCoordinator()
@@ -146,22 +147,82 @@ struct FailureScenarioTests {
         #expect(harness.coordinator.status == .unhealthy(reason: "No successful sync completed in the last 25 minutes."))
     }
 
-    @Test func unmountedExternalDriveNeedsAttentionWithoutRunningRclone() async throws {
-        let harness = try Harness(localPath: "/Volumes/not-mounted-\(UUID().uuidString)/OneDrive")
-        let reason = "The configured external volume is unavailable."
+    @Test func oneFailedSyncTriesAgainAndARepeatNeedsAttention() async throws {
+        let harness = try Harness(awakeFor: 60 * 60)
         await harness.coordinator.load()
+        await harness.scheduler.fire()
+        let reason = "ERROR : Failed to bisync: connection reset by peer"
+        await harness.runner.setExitCode(7, lastLine: reason)
+
+        harness.clock.advance(by: 10 * 60)
+        await harness.scheduler.fire()
+        #expect(harness.coordinator.status == .paused(.retrying(failure: reason)))
+        #expect(harness.coordinator.status.symbolName == "arrow.clockwise.circle")
+
+        harness.clock.advance(by: 10 * 60)
+        await harness.scheduler.fire()
         #expect(harness.coordinator.status == .unhealthy(reason: reason))
+        #expect(harness.coordinator.status.symbolName == "exclamationmark.triangle.fill")
+
+        await harness.runner.setExitCode(0)
+        harness.clock.advance(by: 10 * 60)
+        await harness.scheduler.fire()
+        #expect(harness.coordinator.status == .healthy(lastSuccess: harness.clock.now))
+    }
+
+    @Test func missingCheckFileNeedsAttentionAfterOneFailure() async throws {
+        let harness = try Harness()
+        await harness.coordinator.load()
+        await harness.scheduler.fire()
+        await harness.runner.setExitCode(7, lastLine: "2026/11/09 21:28:51 ERROR : Access test failed: Path1 count 0, Path2 count 1 - RCLONE_TEST")
 
         await harness.scheduler.fire()
 
+        #expect(harness.coordinator.status == .unhealthy(reason: "2026/11/09 21:28:51 ERROR : Access test failed: Path1 count 0, Path2 count 1 - RCLONE_TEST"))
+    }
+
+    @Test func lowDataNetworkPausesInsteadOfNeedingAttention() async throws {
+        let harness = try Harness(awakeFor: 60 * 60)
+        await harness.coordinator.load()
+        await harness.scheduler.fire()
+        harness.network.isLowData = true
+
+        for _ in 1...4 {
+            harness.clock.advance(by: 10 * 60)
+            await harness.scheduler.fire()
+            #expect(harness.coordinator.status == .paused(.lowDataNetwork))
+        }
+        await harness.checkScheduler.fire()
+        #expect(harness.coordinator.status == .paused(.lowDataNetwork))
+        #expect(harness.coordinator.status.title != "Needs attention")
+
+        harness.network.isLowData = false
+        harness.clock.advance(by: 10 * 60)
+        await harness.scheduler.fire()
+        #expect(harness.coordinator.status == .healthy(lastSuccess: harness.clock.now))
+    }
+
+    @Test func unmountedExternalDrivePausesWithoutRunningRclone() async throws {
+        let harness = try Harness(awakeFor: 60 * 60, localPath: "/Volumes/not-mounted-\(UUID().uuidString)/OneDrive")
+        let reason = SyncSettings.volumeUnavailable
+        await harness.coordinator.load()
+        #expect(harness.coordinator.status == .paused(.volumeUnavailable))
+
+        await harness.scheduler.fire()
+        let failedAt = harness.clock.now
+
         #expect(await harness.runner.runs.isEmpty)
-        #expect(harness.coordinator.status == .unhealthy(reason: reason))
+        #expect(harness.coordinator.status == .paused(.volumeUnavailable))
+        // Still a pause, not an alarm, long after the last success.
+        harness.clock.advance(by: 30 * 60)
+        await harness.checkScheduler.fire()
+        #expect(harness.coordinator.status == .paused(.volumeUnavailable))
         #expect(harness.coordinator.latestRun?.outcome == .failure)
         #expect(harness.coordinator.transcriptLines == [reason])
-        #expect(MenuBarView.fix(for: harness.coordinator.status, transcriptLines: harness.coordinator.transcriptLines) == .reconnectDrive)
+        #expect(MenuBarView.fix(for: harness.coordinator.status, transcriptLines: harness.coordinator.transcriptLines) == nil)
         #expect(TranscriptStore(fileURL: harness.paths.latestTranscriptFile).displayLines() == [reason])
         #expect(harness.coordinator.activity.entries.map(\.outcome) == [.failed(reason: reason)])
-        #expect(harness.notifier.posted == [.syncFailed(reason: reason, transcriptLines: [reason], at: harness.clock.now)])
+        #expect(harness.notifier.posted == [.syncFailed(reason: reason, transcriptLines: [reason], at: failedAt)])
     }
 
     // MARK: Fixes the menu offers
