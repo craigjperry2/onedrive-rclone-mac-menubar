@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import OneDriveRcloneMenubar
@@ -130,6 +131,32 @@ struct FailureScenarioTests {
 
         #expect(restarted.status == .unhealthy(reason: "Bisync aborted"))
         #expect(restarted.activity.recent.first?.outcome == .failed(reason: "Bisync aborted"))
+    }
+
+    /// The error is more than 30 lines from the end, past what the menu used to keep.
+    @Test func latestRunShowsAndCopiesTheErrorsEvenAfterLongOutput() async throws {
+        let harness = try Harness()
+        await harness.coordinator.load()
+        let error = "2026/11/09 21:27:15 ERROR : Bisync critical error: check file check failed"
+        let notices = (1...40).map { "2026/11/09 21:27:16 NOTICE: file\($0).txt: Skipped copy as --dry-run is set" }
+        await harness.runner.setOutput(["2026/11/09 21:27:15 NOTICE: starting", error] + notices + ["2026/11/09 21:27:17 NOTICE: Failed to bisync: bisync aborted"], exitCode: 7)
+        await harness.scheduler.fire()
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("latest-run-test-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+
+        await harness.coordinator.copyErrorDetails(to: pasteboard)
+
+        #expect(RunOutput(lines: harness.coordinator.transcriptLines).errorRows == ["21:27:15 ERROR : Bisync critical error: check file check failed"])
+        #expect(pasteboard.string(forType: .string) == """
+        Needs attention: 2026/11/09 21:27:17 NOTICE: Failed to bisync: bisync aborted
+
+        2026/11/09 21:27:15 ERROR : Bisync critical error: check file check failed
+
+        rclone v1.75.2
+        """)
+        let restarted = harness.makeCoordinator()
+        await restarted.load()
+        #expect(RunOutput(lines: restarted.transcriptLines).errorRows.first == "21:27:15 ERROR : Bisync critical error: check file check failed")
     }
 
     @Test func noSuccessfulSyncFor25MinutesNeedsAttention() async throws {

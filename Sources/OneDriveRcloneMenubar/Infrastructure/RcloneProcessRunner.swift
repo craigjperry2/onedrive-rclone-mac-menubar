@@ -10,6 +10,8 @@ protocol RcloneRunning: Sendable {
     func authorize(_ settings: SyncSettings, onSignInURL: @escaping @Sendable (URL) -> Void) async -> String?
     /// Creates the RCLONE_TEST file that `--check-access` needs on the OneDrive side.
     func createRemoteCheckFile(_ settings: SyncSettings) async -> String?
+    /// The first line of `rclone version`, such as "rclone v1.75.2", or nil.
+    func version(_ settings: SyncSettings) async -> String?
 }
 
 actor RcloneProcessRunner: RcloneRunning {
@@ -36,11 +38,15 @@ actor RcloneProcessRunner: RcloneRunning {
             : SyncSettings.readyToSetUp
     }
 
+    // rclone colours bisync's messages even when its output is a pipe unless told
+    // not to. At the default log level a successful run logs nothing, so its final
+    // stats are raised to NOTICE for the menu's summary of what changed.
     func run(_ kind: RunKind, settings: SyncSettings, transcriptURL: URL) async -> Result {
         var arguments = [
             "bisync", "\(settings.remoteName):", settings.localPath,
             "--check-access", "--create-empty-src-dirs", "--exclude=/Personal Vault/**",
-            "--modify-window", "2s", "--resilient", "--fast-list", "--onedrive-delta"
+            "--modify-window", "2s", "--resilient", "--fast-list", "--onedrive-delta",
+            "--color", "NEVER", "--stats-log-level", "NOTICE"
         ]
         if kind == .resync { arguments.append("--resync") }
         return await runProcess(settings, arguments: arguments, transcriptURL: transcriptURL)
@@ -63,6 +69,11 @@ actor RcloneProcessRunner: RcloneRunning {
     func createRemoteCheckFile(_ settings: SyncSettings) async -> String? {
         let result = await runProcess(settings, arguments: ["touch", "\(settings.remoteName):RCLONE_TEST"])
         return result.exitCode == 0 ? nil : result.failureReason ?? "rclone could not create RCLONE_TEST in OneDrive."
+    }
+
+    func version(_ settings: SyncSettings) async -> String? {
+        let result = await runProcess(settings, arguments: ["version"])
+        return result.exitCode == 0 ? result.lines.first : nil
     }
 
     /// The local page rclone prints in case the browser does not open by itself.

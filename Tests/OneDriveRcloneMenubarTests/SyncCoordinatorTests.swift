@@ -460,6 +460,7 @@ actor FakeRcloneRunner: RcloneRunning {
     /// RCLONE_TEST is missing on OneDrive or in the local folder.
     func actLikeBisync() { actsLikeBisync = true }
     func deleteRemoteCheckFile() { remoteHasCheckFile = false }
+    func setOutput(_ lines: [String], exitCode code: Int32) { exitCode = code; output = lines }
     /// Keeps the next run in progress until `releaseHeldRun()`; later runs finish at once.
     func holdNextRun() { holdNext = true }
     func releaseHeldRun() { held?.resume(); held = nil }
@@ -516,8 +517,10 @@ actor FakeRcloneRunner: RcloneRunning {
             await withCheckedContinuation { held = $0 }
         }
         let (exitCode, lines) = actsLikeBisync ? bisync(kind, localPath: settings.localPath) : (exitCode, output)
-        // Like the real runner, bisync failures are reported by the problem they name.
-        return RcloneProcessRunner.Result(exitCode: exitCode, lines: lines, failureReason: actsLikeBisync ? SyncProblem(rcloneOutput: lines)?.name : lines.last, persistenceWarning: nil)
+        // Like the real runner: each run replaces the transcript, the result has its last
+        // 30 lines, and bisync failures are reported by the problem they name.
+        try? Data(lines.map { $0 + "\n" }.joined().utf8).write(to: transcriptURL)
+        return RcloneProcessRunner.Result(exitCode: exitCode, lines: lines.suffix(30), failureReason: actsLikeBisync ? SyncProblem(rcloneOutput: lines)?.name : lines.last, persistenceWarning: nil)
     }
 
     // A resync that fails the access check also loses the listings, as in rclone.
@@ -531,6 +534,8 @@ actor FakeRcloneRunner: RcloneRunning {
         case (false, false): hasListings = hasListings && kind == .sync; return (7, RcloneOutput.checkFileMissingOnBothSides)
         }
     }
+
+    func version(_ settings: SyncSettings) async -> String? { "rclone v1.75.2" }
 }
 
 private struct ConditionTimedOut: Error {}

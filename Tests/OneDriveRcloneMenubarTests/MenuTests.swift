@@ -97,6 +97,123 @@ struct MenuTests {
         #expect(unprompted.hasPrefix("The latest sync does not need a resync."))
     }
 
+    // MARK: Latest run
+
+    /// rclone 1.75.2's output from a bisync without prior listings, run with the
+    /// app's arguments, after a NOTICE as older versions printed first.
+    static let failedRun = [
+        "2026/11/09 21:27:15 NOTICE: bisync is IN BETA. Don't use in production!",
+        "2026/11/09 21:27:15 ERROR : Bisync critical error: cannot find prior Path1 or Path2 listings, likely due to critical error on prior run ",
+        "Tip: here are the filenames we were looking for. Do they exist? ",
+        "Path1: /Users/runner/Library/Caches/rclone/bisync/private_tmp_exp_remote..private_tmp_exp_local.path1.lst",
+        "Path2: /Users/runner/Library/Caches/rclone/bisync/private_tmp_exp_remote..private_tmp_exp_local.path2.lst",
+        "Try running this command to inspect the work dir: ",
+        #"rclone lsl "/Users/runner/Library/Caches/rclone/bisync""#,
+        "2026/11/09 21:27:15 ERROR : Bisync aborted. Error is retryable without --resync due to --resilient mode.",
+        "2026/11/09 21:27:15 NOTICE: ",
+        "Transferred:   \t          0 B / 0 B, -, 0 B/s, ETA -",
+        "Errors:                 1 (fatal error encountered)",
+        "Elapsed time:         0.0s",
+        "2026/11/09 21:27:15 NOTICE: Failed to bisync: bisync aborted",
+    ]
+
+    @Test func errorMessagesComeFirstWithTimesAndLongLinesWrapped() {
+        let output = RunOutput(lines: Self.failedRun)
+
+        #expect(output.errorRows == [
+            "21:27:15 ERROR : Bisync critical error: cannot find prior Path1 or Path2 listings, likely due to",
+            "    critical error on prior run",
+            "Tip: here are the filenames we were looking for. Do they exist?",
+            "Path1: /Users/runner/Library/Caches/rclone/bisync/",
+            "    private_tmp_exp_remote..private_tmp_exp_local.path1.lst",
+            "Path2: /Users/runner/Library/Caches/rclone/bisync/",
+            "    private_tmp_exp_remote..private_tmp_exp_local.path2.lst",
+            "Try running this command to inspect the work dir:",
+            #"rclone lsl "/Users/runner/Library/Caches/rclone/bisync""#,
+            "21:27:15 ERROR : Bisync aborted. Error is retryable without --resync due to --resilient mode.",
+        ])
+        #expect(output.otherRows == [
+            "21:27:15 NOTICE: bisync is IN BETA. Don't use in production!",
+            "21:27:15 NOTICE:",
+            "Transferred: 0 B / 0 B, -, 0 B/s, ETA -",
+            "Errors: 1 (fatal error encountered)",
+            "Elapsed time: 0.0s",
+            "21:27:15 NOTICE: Failed to bisync: bisync aborted",
+        ])
+        #expect(MenuBarView.latestRunHeadline(Self.run(.failure), output: output) == nil)
+    }
+
+    @Test func errorDetailsHoldTheProblemTheErrorMessagesAndTheRcloneVersion() {
+        let details = RunOutput(lines: Self.failedRun).errorDetails(headline: "Needs attention: Failed to bisync: bisync aborted", rcloneVersion: "rclone v1.75.2")
+
+        #expect(details == """
+        Needs attention: Failed to bisync: bisync aborted
+
+        \(Self.failedRun[1...7].joined(separator: "\n"))
+
+        rclone v1.75.2
+        """)
+    }
+
+    @Test func errorDetailsWithoutErrorMessagesHoldTheEndOfTheOutput() {
+        let lines = ["NOTICE: one"] + (2...12).map { "line \($0)" }
+
+        #expect(RunOutput(lines: lines).errorDetails(headline: "Needs attention: x", rcloneVersion: nil) == """
+        Needs attention: x
+
+        \((3...12).map { "line \($0)" }.joined(separator: "\n"))
+
+        rclone version unknown
+        """)
+    }
+
+    @Test(arguments: [
+        // rclone 1.75.2, after copying a file each way and deleting one.
+        ([
+            "2026/11/09 21:27:14 NOTICE: ",
+            "Transferred:   \t          4 B / 4 B, 100%, 0 B/s, ETA -",
+            "Checks:                 6 / 6, 100%, Listed 6",
+            "Deleted:                1 (files), 0 (dirs), 3 B (freed)",
+            "Transferred:            2 / 2, 100%",
+            "Server Side Copies:     2 @ 4 B",
+            "Elapsed time:         0.0s",
+        ], "Succeeded: copied 2 files, deleted 1 file"),
+        // A long run logs stats every minute; the last ones are the totals.
+        ([
+            "2026/11/09 21:00:00 NOTICE: ",
+            "Transferred:   \t   1.500 KiB / 4.500 KiB, 33%, 1 KiB/s, ETA 3s",
+            "Transferred:            1 / 3, 33%",
+            "Elapsed time:       1m0.0s",
+            "2026/11/09 21:01:30 NOTICE: ",
+            "Transferred:   \t   4.500 KiB / 4.500 KiB, 100%, 1 KiB/s, ETA 0s",
+            "Deleted:                2 (files), 1 (dirs)",
+            "Transferred:            3 / 3, 100%",
+            "Elapsed time:       1m30.0s",
+        ], "Succeeded: copied 3 files, deleted 2 files"),
+        // rclone 1.75.2, with nothing to do.
+        ([
+            "2026/11/09 21:27:13 NOTICE: ",
+            "Transferred:   \t          0 B / 0 B, -, 0 B/s, ETA -",
+            "Checks:                 4 / 4, 100%, Listed 4",
+            "Elapsed time:         0.0s",
+        ], "Succeeded: no files changed"),
+        // A transcript from a version that did not ask for stats.
+        ([], "Succeeded"),
+    ] as [([String], String)])
+    func successfulRunsAreSummarisedRatherThanShownAsMissing(transcript: [String], summary: String) {
+        #expect(MenuBarView.latestRunHeadline(Self.run(.success), output: RunOutput(lines: transcript)) == summary)
+    }
+
+    @Test func noRunShowsThatThereIsNoOutput() {
+        #expect(MenuBarView.latestRunHeadline(nil, output: RunOutput(lines: [])) == "No run output yet")
+    }
+
+    static func run(_ outcome: SyncRunRecord.Outcome) -> SyncRunRecord {
+        SyncRunRecord(startedAt: .now, finishedAt: .now, outcome: outcome, failureReason: nil, lastSuccessAt: nil)
+    }
+
+    // MARK: Version and icons
+
     @Test(arguments: [
         (RcloneOutput.checkFileMissingOnOneDrive, "Needs attention: The RCLONE_TEST check file is missing from OneDrive"),
         (RcloneOutput.needsResync, "Needs attention: rclone lost track of the last sync"),
