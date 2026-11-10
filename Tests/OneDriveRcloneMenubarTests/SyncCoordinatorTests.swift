@@ -582,6 +582,11 @@ actor FakeRcloneRunner: RcloneRunning {
     /// RCLONE_TEST is missing on OneDrive or in the local folder.
     func actLikeBisync() { actsLikeBisync = true }
     func deleteRemoteCheckFile() { remoteHasCheckFile = false }
+    private var mostFilesDeletedFrom: SyncProblem.Side?
+    /// As if over half the files were deleted from `side`: ordinary syncs stop at
+    /// bisync's --max-delete safety abort until a sync allows the deletions or a
+    /// resync copies the files back.
+    func deleteMostFiles(from side: SyncProblem.Side) { mostFilesDeletedFrom = side }
     func setOutput(_ lines: [String], exitCode code: Int32) { exitCode = code; output = lines }
     /// Keeps the next run in progress until `releaseHeldRun()` or cancellation; later
     /// runs finish at once.
@@ -660,13 +665,19 @@ actor FakeRcloneRunner: RcloneRunning {
 
     // A resync that fails the access check also loses the listings, as in rclone.
     private func bisync(_ kind: RcloneProcessRunner.RunKind, localPath: String) -> (Int32, [String]) {
-        if kind == .sync, !hasListings { return (7, RcloneOutput.needsResync) }
+        if kind != .resync, !hasListings { return (7, RcloneOutput.needsResync) }
         let folderHasCheckFile = FileManager.default.fileExists(atPath: URL(filePath: localPath).appending(path: "RCLONE_TEST").path(percentEncoded: false))
         switch (remoteHasCheckFile, folderHasCheckFile) {
-        case (true, true): hasListings = hasListings || kind == .resync; return (0, [])
-        case (false, true): hasListings = hasListings && kind == .sync; return (7, RcloneOutput.checkFileMissingOnOneDrive)
-        case (true, false): hasListings = hasListings && kind == .sync; return (7, RcloneOutput.checkFileMissingLocally)
-        case (false, false): hasListings = hasListings && kind == .sync; return (7, RcloneOutput.checkFileMissingOnBothSides)
+        case (true, true):
+            if kind == .sync, let side = mostFilesDeletedFrom {
+                return (1, side == .oneDrive ? RcloneOutput.tooManyDeletes : RcloneOutput.tooManyDeletesLocally)
+            }
+            mostFilesDeletedFrom = nil
+            hasListings = hasListings || kind == .resync
+            return (0, [])
+        case (false, true): hasListings = hasListings && kind != .resync; return (7, RcloneOutput.checkFileMissingOnOneDrive)
+        case (true, false): hasListings = hasListings && kind != .resync; return (7, RcloneOutput.checkFileMissingLocally)
+        case (false, false): hasListings = hasListings && kind != .resync; return (7, RcloneOutput.checkFileMissingOnBothSides)
         }
     }
 

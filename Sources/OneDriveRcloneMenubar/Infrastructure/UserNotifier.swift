@@ -47,12 +47,13 @@ struct SyncNotification: Equatable, Sendable {
         let problem = reason.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: CharacterSet(charactersIn: ". "))
         let stopped = "\(problem). The scheduled sync at \(date.formatted(date: .omitted, time: .shortened)) stopped."
         let fix = MenuBarView.fix(for: .unhealthy(reason: reason), transcriptLines: transcriptLines) ?? .tryAgain
-        let next = if fix == .tryAgain {
+        let next = switch fix {
+        case .tryAgain:
             ""
-        } else if let action = fix.actionTitle {
-            " Open OneDrive Sync in the menu bar and choose \(action)"
-        } else {
-            " " + fix.advice.replacingOccurrences(of: "\n", with: " ")
+        case let .allowDeletes(side):
+            " It did not delete them from \(side.otherSide) too. Open OneDrive Sync in the menu bar and choose Allow Deletes and Sync… if you meant to delete them, or Resync… to copy them back."
+        default:
+            fix.actionTitle.map { " Open OneDrive Sync in the menu bar and choose \($0)" } ?? " " + fix.advice.replacingOccurrences(of: "\n", with: " ")
         }
         let actions: [Action] = fix == .tryAgain ? [.syncNow, .showLog] : [.showLog]
         return SyncNotification(id: "sync-failed", title: "OneDrive sync needs attention", body: stopped + next, actions: actions)

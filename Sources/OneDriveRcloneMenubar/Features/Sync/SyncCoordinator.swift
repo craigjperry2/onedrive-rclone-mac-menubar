@@ -100,6 +100,7 @@ final class SyncCoordinator: ObservableObject {
 
     func syncNow() { Task { await run(.sync) } }
     func resync() { Task { await run(.resync) } }
+    func syncAllowingDeletes() { Task { await run(.syncAllowingDeletes) } }
 
     /// Puts back the RCLONE_TEST file that bisync's --check-access found missing,
     /// then syncs. Returns why the file could not be created, or nil. A missing

@@ -4,15 +4,28 @@ import Foundation
 /// the last line is almost always the generic "Failed to bisync: bisync aborted";
 /// the cause is in the ERROR and CRITICAL lines above it.
 enum SyncProblem: Equatable, Sendable {
-    enum Side: Equatable, Sendable { case oneDrive, localFolder, both }
+    enum Side: Equatable, Sendable {
+        case oneDrive, localFolder, both
+
+        /// The side that still has what was deleted on this one, in the menu's words.
+        var otherSide: String {
+            switch self {
+            case .oneDrive: "your folder"
+            case .localFolder: "OneDrive"
+            case .both: "the other side"
+            }
+        }
+    }
 
     /// bisync's listings from the last run are missing or unusable.
     case needsResync
     /// `--check-access` found RCLONE_TEST missing on one side, or on both.
     case checkFileMissing(Side)
     case signInExpired
-    /// bisync's `--max-delete` safety abort.
-    case tooManyDeletes
+    /// bisync's `--max-delete` safety abort: over half the files on one side were
+    /// deleted since the last sync. rclone names one side; `.both` stands for a
+    /// message that names neither.
+    case tooManyDeletes(Side)
     case oneDriveUnreachable
     /// No known signature: rclone's first ERROR or CRITICAL line, or its last line
     /// when it reported none, without the timestamp and colour codes.
@@ -34,8 +47,8 @@ enum SyncProblem: Equatable, Sendable {
             self = .needsResync
         } else if reports("invalid_grant") {
             self = .signInExpired
-        } else if reports("Safety abort: too many deletes") {
-            self = .tooManyDeletes
+        } else if let abort = errors.first(where: { $0.localizedCaseInsensitiveContains("Safety abort: too many deletes") }) {
+            self = .tooManyDeletes(abort.contains(" on Path1 ") ? .oneDrive : abort.contains(" on Path2 ") ? .localFolder : .both)
         } else if reports("no such host", "connection refused", "network is unreachable", "no route to host", "i/o timeout") {
             self = .oneDriveUnreachable
         } else if let line = errors.first ?? lines.last(where: { !$0.allSatisfy(\.isWhitespace) }) {
@@ -53,7 +66,9 @@ enum SyncProblem: Equatable, Sendable {
         case .checkFileMissing(.localFolder): "The RCLONE_TEST check file is missing from your folder"
         case .checkFileMissing(.both): "The RCLONE_TEST check file is missing from OneDrive and your folder"
         case .signInExpired: "The OneDrive sign-in has expired"
-        case .tooManyDeletes: "Too many files were deleted, so bisync stopped for safety"
+        case .tooManyDeletes(.oneDrive): "Over half the files on OneDrive were deleted since the last sync"
+        case .tooManyDeletes(.localFolder): "Over half the files in your folder were deleted since the last sync"
+        case .tooManyDeletes(.both): "Over half the files on one side were deleted since the last sync"
         case .oneDriveUnreachable: "OneDrive cannot be reached"
         case .unrecognized(let message): message
         }

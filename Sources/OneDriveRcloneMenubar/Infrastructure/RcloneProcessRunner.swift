@@ -15,7 +15,8 @@ protocol RcloneRunning: Sendable {
 }
 
 actor RcloneProcessRunner: RcloneRunning {
-    enum RunKind { case sync, resync }
+    /// `syncAllowingDeletes` is one sync without bisync's `--max-delete` safety abort.
+    enum RunKind { case sync, syncAllowingDeletes, resync }
     struct Result: Sendable {
         let exitCode: Int32
         let lines: [String]
@@ -48,7 +49,11 @@ actor RcloneProcessRunner: RcloneRunning {
             "--modify-window", "2s", "--resilient", "--fast-list", "--onedrive-delta",
             "--color", "NEVER", "--stats-log-level", "NOTICE"
         ]
-        if kind == .resync { arguments.append("--resync") }
+        switch kind {
+        case .sync: break
+        case .syncAllowingDeletes: arguments.append("--force")
+        case .resync: arguments.append("--resync")
+        }
         return await runProcess(settings, arguments: arguments, transcriptURL: transcriptURL)
     }
 

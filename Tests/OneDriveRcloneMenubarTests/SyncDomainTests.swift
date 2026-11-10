@@ -203,6 +203,9 @@ struct SyncDomainTests {
         (RcloneOutput.resyncWithCheckFileMissingOnOneDrive, "The RCLONE_TEST check file is missing from OneDrive. ", " Open OneDrive Sync in the menu bar and choose Recreate Check File on OneDrive…", [.showLog]),
         (RcloneOutput.needsResync, "rclone lost track of the last sync. ", " Open OneDrive Sync in the menu bar and choose Resync…", [.showLog]),
         (RcloneOutput.signInExpired, "The OneDrive sign-in has expired. ", " Every sync fails until rclone signs in again.", [.showLog]),
+        // Trying again stops the same way, so Sync Now is not offered.
+        (RcloneOutput.tooManyDeletesLocally, "Over half the files in your folder were deleted since the last sync. ", " stopped. It did not delete them from OneDrive too. Open OneDrive Sync in the menu bar and choose Allow Deletes and Sync… if you meant to delete them, or Resync… to copy them back.", [.showLog]),
+        (RcloneOutput.tooManyDeletes, "Over half the files on OneDrive were deleted since the last sync. ", " It did not delete them from your folder too. Open OneDrive Sync in the menu bar and choose Allow Deletes and Sync… if you meant to delete them, or Resync… to copy them back.", [.showLog]),
         (RcloneOutput.unreachableDNS, "OneDrive cannot be reached. ", " stopped.", [.syncNow, .showLog]),
     ] as [([String], String, String, [SyncNotification.Action])])
     func failureNotificationNamesTheProblemAndOffersOnlyFixesThatCanHelp(output: [String], bodyStart: String, bodyEnd: String, actions: [SyncNotification.Action]) throws {
@@ -249,7 +252,11 @@ struct SyncDomainTests {
         (RcloneOutput.checkFileMissingLocally, .checkFileMissing(.localFolder)),
         (["2026/11/09 10:00:00 ERROR : Access test failed: Path1 count 0, Path2 count 0 - RCLONE_TEST"], .checkFileMissing(.both)),
         (RcloneOutput.signInExpired, .signInExpired),
-        (RcloneOutput.tooManyDeletes, .tooManyDeletes),
+        (RcloneOutput.tooManyDeletes, .tooManyDeletes(.oneDrive)),
+        (RcloneOutput.tooManyDeletesLocally, .tooManyDeletes(.localFolder)),
+        // rclone's form when bisync tracked some deletes as renames.
+        (["2026/11/10 08:03:21 ERROR : Safety abort: too many deletes (>50%, 5 of 8 after excluding 1 tracked renames) on Path2 \"/Users/craig/OneDrive/\". Run with --force if desired."], .tooManyDeletes(.localFolder)),
+        (["ERROR : Safety abort: too many deletes"], .tooManyDeletes(.both)),
         (RcloneOutput.unreachableDNS, .oneDriveUnreachable),
         (RcloneOutput.unreachableConnectionRefused, .oneDriveUnreachable),
         // An expired token that cannot be refreshed while offline is a network problem, not a sign-in problem.
@@ -260,7 +267,7 @@ struct SyncDomainTests {
     }
 
     @Test func differentProblemsHaveDifferentNames() {
-        let problems: [SyncProblem] = [.needsResync, .checkFileMissing(.oneDrive), .checkFileMissing(.localFolder), .checkFileMissing(.both), .signInExpired, .tooManyDeletes, .oneDriveUnreachable]
+        let problems: [SyncProblem] = [.needsResync, .checkFileMissing(.oneDrive), .checkFileMissing(.localFolder), .checkFileMissing(.both), .signInExpired, .tooManyDeletes(.oneDrive), .tooManyDeletes(.localFolder), .tooManyDeletes(.both), .oneDriveUnreachable]
 
         #expect(Set(problems.map(\.name)).count == problems.count)
     }
@@ -511,6 +518,18 @@ enum RcloneOutput {
         "2026/11/09 21:26:35 ERROR : Safety abort: too many deletes (>50%, 6 of 8) on Path1 \"/Users/runner/onedrive-fake/remote/\". Run with --force if desired.",
         "2026/11/09 21:26:35 NOTICE: \u{1B}[31mBisync aborted. Please try again.\u{1B}[0m",
         "2026/11/09 21:26:35 NOTICE: Failed to bisync: too many deletes",
+    ]
+    /// rclone 1.75.2 after 5 of 8 files were deleted from the local folder.
+    static let tooManyDeletesLocally = [
+        "2026/11/10 08:03:21 ERROR : Safety abort: too many deletes (>50%, 5 of 8) on Path2 \"/private/tmp/td/local/\". Run with --force if desired.",
+        "2026/11/10 08:03:21 NOTICE: Bisync aborted. Please try again.",
+        "2026/11/10 08:03:21 NOTICE: ",
+        "Transferred:   \t          0 B / 0 B, -, 0 B/s, ETA -",
+        "Errors:                 1 (retrying may help)",
+        "Checks:                11 / 11, 100%, Listed 11",
+        "Elapsed time:         0.0s",
+        "",
+        "2026/11/10 08:03:21 NOTICE: Failed to bisync: too many deletes",
     ]
     /// An expired access token whose refresh token Microsoft rejected.
     static let signInExpired = [

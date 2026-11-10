@@ -58,8 +58,10 @@ Synthetic clicks open the status item's menu and select its items. Install `clic
 
 On the Satellite, notifications need three things before they appear:
 
-- Notification Center's launch agent is not loaded. Load it with `launchctl bootstrap gui/$(id -u) /System/Library/LaunchAgents/com.apple.notificationcenterui.plist`.
+- Notification Center's launch agent is disabled and not loaded. Enable and load it with `launchctl enable gui/$(id -u)/com.apple.notificationcenterui.agent; launchctl bootstrap gui/$(id -u) /System/Library/LaunchAgents/com.apple.notificationcenterui.plist`. Without the `enable`, `bootstrap` fails with "5: Input/output error".
 - macOS refuses notifications to an unsigned app, so ad-hoc sign the build with `codesign --force --deep -s - .build/xcode/Build/Products/Debug/OneDriveRcloneMenubar.app` before launching it.
 - Turn on **Allow notifications** for OneDriveRcloneMenubar in System Settings > Notifications. Choose the Persistent alert style so a notification stays on screen for screenshots.
 
 To see a failure notification, set `intervalSeconds` to 30 in `settings.json`, delete `~/onedrive-fake/remote/RCLONE_TEST` after a successful sync, and wait for the next scheduled sync. Hover over the notification to see its buttons; two buttons appear under **Options**. Put the file back to see the "working again" notification. A notification that `chmod 000 ~/onedrive-fake/remote` causes offers Sync Now.
+
+To see bisync's too-many-deletes safety abort, put a few more files in `~/onedrive-fake/remote/`, sync, then delete over half of the files from `local/` (or from `remote/`). The next sync needs attention with "Over half the files in your folder were deleted since the last sync", and its notification offers only Show Log. **Allow Deletes and Sync…** deletes the files from the other side too; **Resync…** copies them back.
