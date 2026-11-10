@@ -73,6 +73,7 @@ struct PersistedFormatTests {
         let date = Date(timeIntervalSinceReferenceDate: 800_000_000.5)
         var log = ActivityLog()
         log.record(SyncActivity(trigger: .scheduled, outcome: .failed(reason: "multi\nline"), startedAt: date, finishedAt: date))
+        log.record(SyncActivity(trigger: .syncNow, outcome: .stopped, startedAt: date, finishedAt: date + 60))
         log.record(SyncActivity(trigger: .scheduled, outcome: .skipped(.lowDataNetwork), startedAt: date, finishedAt: date + 600))
         log.record(SyncActivity(trigger: .scheduled, outcome: .skipped(.lowDataNetwork), startedAt: date + 600, finishedAt: date + 1200))
         log.problemNotified = true

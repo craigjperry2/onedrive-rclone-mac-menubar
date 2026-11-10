@@ -6,7 +6,7 @@ struct MenuBarView: View {
 
     var body: some View {
         Group {
-            lines(coordinator.status.headline)
+            lines(Self.statusTitle(coordinator.status, runStartedAt: coordinator.runStartedAt, now: Date()))
             if let explanation = coordinator.status.explanation { lines(explanation) }
             // The fix for a problem sits directly under the headline that names it.
             if let fix = Self.fix(for: coordinator.status, transcriptLines: coordinator.transcriptLines) {
@@ -31,7 +31,6 @@ struct MenuBarView: View {
             if let skip = coordinator.activity.entries.last, skip.outcome == .skipped(.lowDataNetwork) {
                 Text("Skipped \(skip.count == 1 ? "1 sync" : "\(skip.count) syncs") since \(skip.startedAt.formatted(date: .omitted, time: .shortened))")
             }
-            if coordinator.isRunning { Text("rclone is running…") }
 
             Menu("Recent Activity") {
                 let now = Date()
@@ -69,13 +68,25 @@ struct MenuBarView: View {
                     openWindow(id: "setup")
                 }
             }
+            if coordinator.isRunning {
+                Button(coordinator.isStopping ? "Stopping…" : "Stop Sync", action: coordinator.stopSync)
+                    .disabled(coordinator.isStopping)
+            }
             Button("Sync Now", action: coordinator.syncNow).disabled(!coordinator.canStartSync)
             Button("Resync…", action: confirmResync).disabled(!coordinator.canStartSync)
             Divider()
             Text(Self.versionTitle(info: Bundle.main.infoDictionary))
             Button("Quit OneDrive Sync") { NSApplication.shared.terminate(nil) }
                 .disabled(coordinator.isRunning)
+            if coordinator.isRunning { Text("Quit is unavailable until the sync stops.") }
         }
+    }
+
+    /// The first row. A run in progress also says how long it has been going.
+    static func statusTitle(_ status: SyncStatus, runStartedAt: Date?, now: Date) -> String {
+        guard status == .running, let runStartedAt else { return status.headline }
+        let minutes = Int(now.timeIntervalSince(runStartedAt) / 60)
+        return minutes < 1 ? "Syncing for less than a minute" : "Syncing for \(minutes) min"
     }
 
     /// What fixes a Needs attention problem, shown under the headline that names it.

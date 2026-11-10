@@ -176,6 +176,35 @@ struct RcloneProcessRunnerTests {
         #expect(result.exitCode != 0)
     }
 
+    /// Stop Sync cancels the run. bisync shuts down gracefully, removing its lock file,
+    /// only on SIGINT or SIGTERM; SIGKILL would leave the lock and block later runs.
+    @Test func cancellingARunSendsRcloneSIGTERM() async throws {
+        let started = directory.url.appending(path: "started")
+        let signal = directory.url.appending(path: "signal")
+        let settings = try settings(rclone: """
+        #!/bin/sh
+        trap 'echo TERM > "\(signal.path(percentEncoded: false))"; echo "NOTICE: Graceful shutdown completed successfully."; exit 143' TERM
+        echo "NOTICE: bisync is IN BETA."
+        touch "\(started.path(percentEncoded: false))"
+        i=0
+        while [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+        """)
+        let begin = Date()
+        let transcript = transcript
+
+        let run = Task { await RcloneProcessRunner().run(.sync, settings: settings, transcriptURL: transcript) }
+        while !FileManager.default.fileExists(atPath: started.path(percentEncoded: false)), Date().timeIntervalSince(begin) < 10 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        run.cancel()
+        let result = await run.value
+
+        #expect(try String(contentsOf: signal, encoding: .utf8) == "TERM\n")
+        #expect(result.exitCode == 143)
+        #expect(result.lines.last == "NOTICE: Graceful shutdown completed successfully.")
+        #expect(Date().timeIntervalSince(begin) < 9)
+    }
+
     @Test func eachRunReplacesThePreviousTranscript() async throws {
         let failing = try settings(rclone: "#!/bin/sh\necho 'first run failed'\nexit 1\n")
         _ = await RcloneProcessRunner().run(.sync, settings: failing, transcriptURL: transcript)

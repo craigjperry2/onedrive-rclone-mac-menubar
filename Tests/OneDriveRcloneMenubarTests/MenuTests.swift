@@ -265,6 +265,21 @@ struct MenuTests {
     }
 
     @Test(arguments: [
+        (.running, 59, "Syncing for less than a minute"),
+        (.running, 60, "Syncing for 1 min"),
+        (.running, 3 * 60 + 59, "Syncing for 3 min"),
+        (.running, 31 * 60, "Syncing for 31 min"),
+        (.running, nil, "Syncing"),
+        (.healthy(lastSuccess: .distantPast), 3 * 60, "Healthy"),
+        (.unhealthy(reason: "The OneDrive sign-in has expired"), 3 * 60, "Needs attention: The OneDrive sign-in has expired"),
+    ] as [(SyncStatus, TimeInterval?, String)])
+    func statusRowSaysHowLongTheSyncHasRun(status: SyncStatus, elapsed: TimeInterval?, expected: String) {
+        let now = Date(timeIntervalSinceReferenceDate: 800_000_000)
+
+        #expect(MenuBarView.statusTitle(status, runStartedAt: elapsed.map { now - $0 }, now: now) == expected)
+    }
+
+    @Test(arguments: [
         (nil, "Development build"),
         (["CFBundleShortVersionString": "0.0.0", "CFBundleVersion": "0"], "Development build"),
         (["CFBundleShortVersionString": "1.4.2", "CFBundleVersion": "57"], "Version 1.4.2 (57)"),

@@ -57,6 +57,8 @@ Disable `homeNetwork.onedriveRclone` before relying on this app's automatic sche
 
 When a sync needs attention, the menu names the problem and, when there is one, puts its fix directly below: **Resync…** when rclone lost track of the last sync, or **Recreate Check File…** when `RCLONE_TEST` is missing from OneDrive or your folder. A missing check file can mean rclone is connected to the wrong account or folder, or that files were deleted, so check that side before recreating it; the app asks first and then syncs.
 
+While a run is in progress, the menu shows how long it has been running, and **Stop Sync** stops it: rclone gets SIGTERM, which makes bisync finish the files it started and save its state, so the next sync carries on normally. This can take up to 90 seconds. Recent Activity records the run as stopped by you; a stopped run does not show Needs attention or notify. Quit is unavailable until the run stops.
+
 Use **Sync Now** for an ordinary immediate run. Use **Resync** only for initialization or recovery after rclone requires it. The app asks for confirmation because `rclone bisync --resync` can overwrite files according to rclone's recovery mode.
 
 ## Development

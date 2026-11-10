@@ -10,6 +10,11 @@ final class SyncCoordinator: ObservableObject {
     @Published private(set) var loginWarning: String?
     @Published private(set) var persistenceWarning: String?
     @Published private(set) var activity = ActivityLog()
+    /// When the run in progress started, for the menu's elapsed time.
+    @Published private(set) var runStartedAt: Date?
+    /// The user chose Stop Sync and rclone has not exited yet. bisync takes up to
+    /// 90 seconds to shut down gracefully.
+    @Published private(set) var isStopping = false
 
     private let paths: AppPaths
     let runner: any RcloneRunning
@@ -27,6 +32,7 @@ final class SyncCoordinator: ObservableObject {
     private var scheduledInterval: TimeInterval?
     private var awakeSince: Date
     private var running = false
+    private var rcloneTask: Task<RcloneProcessRunner.Result, Never>?
     private var didLoad = false
 
     private var settingsStore: JSONFileStore<SyncSettings> { JSONFileStore(fileURL: paths.settingsFile) }
@@ -113,6 +119,14 @@ final class SyncCoordinator: ObservableObject {
         if side != .localFolder, let failure = await runner.createRemoteCheckFile(settings) { return failure }
         await run(.sync)
         return nil
+    }
+
+    /// Cancels the run in progress, which sends rclone SIGTERM. bisync then shuts
+    /// down gracefully and removes its lock file, so the next sync can run.
+    func stopSync() {
+        guard running, !isStopping else { return }
+        isStopping = true
+        rcloneTask?.cancel()
     }
 
     var canStartSync: Bool {
@@ -228,7 +242,7 @@ final class SyncCoordinator: ObservableObject {
     }
 
     private func recordActivity(_ entry: SyncActivity) {
-        let previousRunFailed = activity.entries.last { !$0.isSkip }.map { $0.outcome != .succeeded } ?? false
+        let previousRunFailed = activity.entries.last { !$0.isSkip && $0.outcome != .stopped }.map { $0.outcome != .succeeded } ?? false
         activity.record(entry)
         let notification = notification(for: entry, previousRunFailed: previousRunFailed)
         if let notification { activity.problemNotified = notification != .syncRecovered }
@@ -268,6 +282,8 @@ final class SyncCoordinator: ObservableObject {
         guard let settings else { return }
         let trigger: SyncActivity.Trigger = scheduled ? .scheduled : kind == .resync ? .resync : .syncNow
         running = true
+        runStartedAt = now()
+        defer { runStartedAt = nil; isStopping = false }
         refreshStatus()
         if let availabilityError = settings.availabilityError() {
             finishUnavailableRun(reason: availabilityError, trigger: trigger)
@@ -282,7 +298,23 @@ final class SyncCoordinator: ObservableObject {
         }
         applyValidation(nil, snapshot: ConfigurationSnapshot(settings: settings))
         let startedAt = now()
-        let result = await runner.run(kind, settings: settings, transcriptURL: paths.latestTranscriptFile)
+        // Stopped while rclone checked the configuration, so bisync never starts.
+        if isStopping { return finishStoppedRun(trigger: trigger, startedAt: startedAt) }
+        let rcloneTask = Task { await runner.run(kind, settings: settings, transcriptURL: paths.latestTranscriptFile) }
+        self.rcloneTask = rcloneTask
+        let result = await rcloneTask.value
+        self.rcloneTask = nil
+        // A run that finished cleanly as the user chose Stop Sync still succeeded.
+        if isStopping, result.exitCode != 0 {
+            // The run state still describes the previous run, so its output goes back
+            // too: the status, its fix, and Run Output keep describing the same run.
+            do {
+                try transcriptStore.replace(with: Data(transcriptLines.map { $0 + "\n" }.joined().utf8))
+            } catch {
+                persistenceWarning = "The previous run's output could not be restored: \(error.localizedDescription)"
+            }
+            return finishStoppedRun(trigger: trigger, startedAt: startedAt)
+        }
         let finishedAt = now()
         let previousSuccess = latestRun?.lastSuccessAt
         let succeeded = result.exitCode == 0
@@ -307,6 +339,14 @@ final class SyncCoordinator: ObservableObject {
         // The whole saved log, so that error messages before the last 30 lines still show.
         transcriptLines = result.persistenceWarning == nil ? transcriptStore.displayLines(limit: .max) : result.lines
         recordActivity(SyncActivity(trigger: trigger, outcome: failureReason.map { SyncActivity.Outcome.failed(reason: $0) } ?? .succeeded, startedAt: startedAt, finishedAt: finishedAt))
+        running = false
+        status = evaluatedStatus(validationError: nil)
+    }
+
+    /// A stopped run leaves the run state as the previous run left it, so the status
+    /// returns to what it was before the run rather than needing attention.
+    private func finishStoppedRun(trigger: SyncActivity.Trigger, startedAt: Date) {
+        recordActivity(SyncActivity(trigger: trigger, outcome: .stopped, startedAt: startedAt, finishedAt: now()))
         running = false
         status = evaluatedStatus(validationError: nil)
     }

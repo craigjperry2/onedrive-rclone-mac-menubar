@@ -6,6 +6,8 @@ struct SyncActivity: Codable, Equatable, Sendable {
     enum Outcome: Codable, Equatable, Sendable {
         case succeeded
         case failed(reason: String)
+        /// The user chose Stop Sync. Not a failure: it neither needs attention nor notifies.
+        case stopped
         case skipped(SkipReason)
     }
 
@@ -35,6 +37,8 @@ struct SyncActivity: Codable, Equatable, Sendable {
             return "\(name) succeeded at \(Self.time(finishedAt, now: now))"
         case .failed:
             return "\(name) needed attention at \(Self.time(finishedAt, now: now))"
+        case .stopped:
+            return "\(name) stopped by you at \(Self.time(finishedAt, now: now))"
         case .skipped(let reason) where count == 1:
             return "Scheduled sync skipped at \(Self.time(startedAt, now: now)): \(reason.label)"
         case .skipped(let reason):
