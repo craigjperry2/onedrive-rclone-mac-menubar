@@ -113,19 +113,59 @@ struct RcloneProcessRunnerTests {
         #expect(result.failureReason == "The RCLONE_TEST check file is missing from OneDrive")
     }
 
-    /// rclone 1.75 colours bisync's messages even when its output is a pipe.
+    /// rclone 1.75 colours bisync's messages even when its output is a pipe, unless
+    /// it is given `--color NEVER`.
     @Test func displayedOutputHasNoTerminalColourCodes() async throws {
         let settings = try settings(rclone: #"""
         #!/bin/sh
-        printf '2026/11/09 04:48:41 ERROR : \033[31mBisync aborted. Must run --resync to recover.\033[0m\n'
+        red='\033[31m' reset='\033[0m'
+        while [ $# -gt 0 ]; do
+          [ "$1" = --color ] && [ "$2" = NEVER ] && red= reset=
+          shift
+        done
+        printf '2026/11/09 04:48:41 ERROR : %bBisync aborted. Must run --resync to recover.%b\n' "$red" "$reset"
         exit 7
         """#)
 
         let result = await RcloneProcessRunner().run(.sync, settings: settings, transcriptURL: transcript)
 
-        withKnownIssue("rclone's ANSI colour codes reach the Latest run menu: the app neither passes --color NEVER nor strips them") {
-            #expect(result.lines == ["2026/11/09 04:48:41 ERROR : Bisync aborted. Must run --resync to recover."])
-        }
+        #expect(result.lines == ["2026/11/09 04:48:41 ERROR : Bisync aborted. Must run --resync to recover."])
+        #expect(try String(contentsOf: transcript, encoding: .utf8) == "2026/11/09 04:48:41 ERROR : Bisync aborted. Must run --resync to recover.\n")
+    }
+
+    /// rclone logs its final stats at INFO, which the default NOTICE level hides.
+    @Test func successfulRunsLogWhatTheyChanged() async throws {
+        let settings = try settings(rclone: #"""
+        #!/bin/sh
+        while [ $# -gt 0 ]; do
+          if [ "$1" = --stats-log-level ] && [ "$2" = NOTICE ]; then
+            echo '2026/11/09 21:27:14 NOTICE: '
+            printf 'Transferred:   \t          4 B / 4 B, 100%%, 0 B/s, ETA -\n'
+            echo 'Deleted:                1 (files), 0 (dirs), 3 B (freed)'
+            echo 'Transferred:            2 / 2, 100%'
+            echo 'Elapsed time:         0.0s'
+          fi
+          shift
+        done
+        """#)
+
+        let result = await RcloneProcessRunner().run(.sync, settings: settings, transcriptURL: transcript)
+
+        #expect(result.exitCode == 0)
+        #expect(RunOutput(lines: TranscriptStore(fileURL: transcript).displayLines()).successSummary == "Succeeded: copied 2 files, deleted 1 file")
+    }
+
+    @Test func versionIsTheFirstLineOfRcloneVersion() async throws {
+        let settings = try settings(rclone: """
+        #!/bin/sh
+        [ "$1" = version ] || exit 9
+        echo 'rclone v1.75.2'
+        echo '- os/version: darwin 27.2 (64 bit)'
+        echo '- go/version: go1.25.4'
+        """)
+
+        #expect(await RcloneProcessRunner().version(settings) == "rclone v1.75.2")
+        #expect(await RcloneProcessRunner().version(try self.settings(rclone: "#!/bin/sh\nexit 1\n")) == nil)
     }
 
     @Test func killedRcloneIsAFailure() async throws {

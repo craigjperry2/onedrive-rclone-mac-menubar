@@ -78,7 +78,7 @@ final class SyncCoordinator: ObservableObject {
             try paths.createDirectories()
             if try settingsStore.load() == nil { try settingsStore.save(.initialTemplate) }
             latestRun = try runStateStore.load()
-            transcriptLines = transcriptStore.displayLines()
+            transcriptLines = transcriptStore.displayLines(limit: .max)
             // History is informational, so an unreadable file starts a new one.
             activity = (try? activityStore.load()) ?? ActivityLog()
             loginItem.registerIfNeeded()
@@ -297,7 +297,8 @@ final class SyncCoordinator: ObservableObject {
         } catch {
             persistenceWarning = joinedWarning(persistenceWarning, "The latest run state could not be saved: \(error.localizedDescription)")
         }
-        transcriptLines = result.lines
+        // The whole saved log, so that error messages before the last 30 lines still show.
+        transcriptLines = result.persistenceWarning == nil ? transcriptStore.displayLines(limit: .max) : result.lines
         recordActivity(SyncActivity(trigger: trigger, outcome: failureReason.map { SyncActivity.Outcome.failed(reason: $0) } ?? .succeeded, startedAt: startedAt, finishedAt: finishedAt))
         running = false
         status = evaluatedStatus(validationError: nil)
@@ -325,6 +326,22 @@ final class SyncCoordinator: ObservableObject {
         recordActivity(SyncActivity(trigger: trigger, outcome: .failed(reason: reason), startedAt: finishedAt, finishedAt: finishedAt))
         running = false
         status = evaluatedStatus(validationError: nil)
+    }
+
+    /// Opens latest-run.log in the app that opens .log files, usually Console.
+    func openFullLog() {
+        NSWorkspace.shared.open(paths.latestTranscriptFile)
+    }
+
+    /// Puts the latest run's failure, rclone's error messages, and the rclone
+    /// version on the pasteboard, for a bug report or a search.
+    func copyErrorDetails(to pasteboard: NSPasteboard = .general) async {
+        guard let latestRun, latestRun.outcome == .failure else { return }
+        let rcloneVersion: String? = if let settings { await runner.version(settings) } else { nil }
+        // The run's failure reason names the problem, as the menu's first row does.
+        let headline = SyncStatus.unhealthy(reason: latestRun.failureReason ?? "The most recent sync failed.").headline
+        pasteboard.clearContents()
+        pasteboard.setString(RunOutput(lines: transcriptLines).errorDetails(headline: headline, rcloneVersion: rcloneVersion), forType: .string)
     }
 
     private func evaluatedStatus(validationError: String?) -> SyncStatus {

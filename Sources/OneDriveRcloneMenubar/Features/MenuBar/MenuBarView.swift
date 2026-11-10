@@ -41,11 +41,19 @@ struct MenuBarView: View {
                 }
             }
             Menu(latestRunTitle) {
-                if coordinator.transcriptLines.isEmpty {
-                    Text("No run output yet")
-                } else {
-                    ForEach(Array(coordinator.transcriptLines.enumerated()), id: \.offset) { _, line in
-                        Text(line).font(.caption.monospaced())
+                let output = RunOutput(lines: coordinator.transcriptLines)
+                if let headline = Self.latestRunHeadline(coordinator.latestRun, output: output) {
+                    Text(headline)
+                    if !output.otherRows.isEmpty { Divider() }
+                }
+                outputRows(output.errorRows)
+                if !output.errorRows.isEmpty, !output.otherRows.isEmpty { Divider() }
+                outputRows(output.otherRows)
+                if let latestRun = coordinator.latestRun {
+                    Divider()
+                    Button("Open Full Log", action: coordinator.openFullLog)
+                    if latestRun.outcome == .failure {
+                        Button("Copy Error Details") { Task { await coordinator.copyErrorDetails() } }
                     }
                 }
             }
@@ -150,9 +158,22 @@ struct MenuBarView: View {
         return (title, message)
     }
 
+    /// The first row of Latest run. rclone logs nothing about a successful run except
+    /// its stats, so success gets a summary rather than looking like no run happened.
+    static func latestRunHeadline(_ latestRun: SyncRunRecord?, output: RunOutput) -> String? {
+        if latestRun?.outcome == .success { return output.successSummary }
+        return output.errorLines.isEmpty && output.otherLines.isEmpty ? "No run output yet" : nil
+    }
+
     /// Menu rows are single lines, so messages put each short line in its own row.
     private func lines(_ text: String) -> some View {
         ForEach(text.split(separator: "\n").map(String.init), id: \.self) { Text($0) }
+    }
+
+    private func outputRows(_ rows: [String]) -> some View {
+        ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+            Text(row).font(.caption.monospaced())
+        }
     }
 
     // An NSAlert rather than .confirmationDialog: the menu closes before the
