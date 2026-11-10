@@ -100,6 +100,10 @@ struct MenuBarView: View {
         case reconnectDrive
         /// rclone's OneDrive sign-in expired, which no sync can fix.
         case signInAgain
+        /// bisync's --max-delete check stopped a sync that would delete the files
+        /// deleted on this side from the other side too. Every sync stops the same
+        /// way until the user allows the deletions, or a resync copies the files back.
+        case allowDeletes(SyncProblem.Side)
         /// Nothing known; the next attempt may pass.
         case tryAgain
 
@@ -109,6 +113,11 @@ struct MenuBarView: View {
             case .recreateCheckFile: "Every sync fails until it is back."
             case .reconnectDrive: "Syncing resumes when the drive is connected again."
             case .signInAgain: "Every sync fails until rclone signs in again."
+            case let .allowDeletes(side): """
+                Syncing stopped rather than delete them from \(side.otherSide) too.
+                If you meant to delete them, choose Allow Deletes and Sync…
+                If not, choose Resync… to copy them back from \(side.otherSide).
+                """
             case .tryAgain: "Choose Sync Now to try again.\nRun Output shows what rclone reported."
             }
         }
@@ -119,6 +128,7 @@ struct MenuBarView: View {
             case .recreateCheckFile(.oneDrive): "Recreate Check File on OneDrive…"
             case .recreateCheckFile(.localFolder): "Recreate Check File in Your Folder…"
             case .recreateCheckFile(.both): "Recreate Check Files…"
+            case .allowDeletes: "Allow Deletes and Sync…"
             case .reconnectDrive, .signInAgain, .tryAgain: nil
             }
         }
@@ -135,15 +145,21 @@ struct MenuBarView: View {
         case .needsResync: .resync
         case .checkFileMissing(let side): .recreateCheckFile(side)
         case .signInExpired: .signInAgain
-        case .tooManyDeletes, .oneDriveUnreachable, .unrecognized, nil: .tryAgain
+        case .tooManyDeletes(let side): .allowDeletes(side)
+        case .oneDriveUnreachable, .unrecognized, nil: .tryAgain
         }
     }
 
     /// The Resync confirmation: why it is suggested, if it is, and what it does here.
-    static func resyncConfirmation(suggested: Bool, settings: SyncSettings) -> String {
-        let why = suggested
-            ? "rclone lost its record of the last sync, so ordinary syncs fail until a resync rebuilds it."
-            : "The latest sync does not need a resync. Use it only when rclone asks for one; Sync Now handles ordinary changes."
+    static func resyncConfirmation(for fix: Fix?, settings: SyncSettings) -> String {
+        let why = switch fix {
+        case .resync:
+            "rclone lost its record of the last sync, so ordinary syncs fail until a resync rebuilds it."
+        case let .allowDeletes(side):
+            "\(SyncProblem.tooManyDeletes(side).name). If you did not mean to delete them, a resync copies them back from \(side.otherSide)."
+        default:
+            "The latest sync does not need a resync. Use it only when rclone asks for one; Sync Now handles ordinary changes."
+        }
         return """
         \(why)
 
@@ -169,6 +185,28 @@ struct MenuBarView: View {
         Look in \(place) first. If your files are missing, cancel: once the check file is back, the next sync treats them as deleted and deletes them \(otherSide) too.
 
         Recreate adds an empty RCLONE_TEST, then syncs.
+        """
+        return (title, message)
+    }
+
+    /// The Allow Deletes confirmation. Cancel is the safe choice, so it says how to
+    /// get the files back instead.
+    static func deletesConfirmation(deletedFrom side: SyncProblem.Side, settings: SyncSettings) -> (title: String, message: String) {
+        let oneDrive = "OneDrive (\(settings.remoteName):)"
+        let (title, place, otherSide) = switch side {
+        case .oneDrive: ("Delete these files from your folder too?", oneDrive, settings.localPath)
+        case .localFolder: ("Delete these files from OneDrive too?", settings.localPath, oneDrive)
+        case .both: ("Delete these files from the other side too?", "\(oneDrive) or \(settings.localPath)", "the other side")
+        }
+        let message = """
+        Over half the files in \(place) were deleted since the last sync, so syncing stopped rather than delete them from \(otherSide) too. That can mean:
+
+        • you deleted or moved them on purpose
+        • they were deleted by mistake, or by another app or device
+
+        Look in \(place) first. If you did not mean to delete them, cancel and choose Resync…, which copies them back from \(otherSide).
+
+        Allow Deletes and Sync runs one sync without this safety check, so the files are deleted from \(otherSide) as well. This app cannot undo that.
         """
         return (title, message)
     }
@@ -237,8 +275,8 @@ struct MenuBarView: View {
     // action runs, so a dialog attached to the menu content is never presented.
     private func confirmResync() {
         guard let settings = coordinator.settings else { return }
-        let suggested = Self.fix(for: coordinator.status, transcriptLines: coordinator.transcriptLines) == .resync
-        guard confirm("Run recovery resync?", Self.resyncConfirmation(suggested: suggested, settings: settings), action: "Resync") else { return }
+        let fix = Self.fix(for: coordinator.status, transcriptLines: coordinator.transcriptLines)
+        guard confirm("Run recovery resync?", Self.resyncConfirmation(for: fix, settings: settings), action: "Resync") else { return }
         coordinator.resync()
     }
 
@@ -258,6 +296,11 @@ struct MenuBarView: View {
                 NSApp.activate()
                 alert.runModal()
             }
+        case let .allowDeletes(side):
+            guard let settings = coordinator.settings else { return }
+            let confirmation = Self.deletesConfirmation(deletedFrom: side, settings: settings)
+            guard confirm(confirmation.title, confirmation.message, action: "Allow Deletes and Sync") else { return }
+            coordinator.syncAllowingDeletes()
         case .reconnectDrive, .signInAgain, .tryAgain:
             break
         }

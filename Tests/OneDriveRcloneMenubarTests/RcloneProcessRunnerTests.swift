@@ -80,8 +80,20 @@ struct RcloneProcessRunnerTests {
         #expect(result.exitCode == 0)
         #expect(Array(result.lines.prefix(3)) == ["arg=bisync", "arg=onedrive:", "arg=\(settings.localPath)"])
         #expect(!result.lines.contains("arg=--resync"))
+        #expect(!result.lines.contains("arg=--force"))
         #expect(result.lines.contains("arg=--check-access"))
         #expect(result.lines.contains("arg=--exclude=/Personal Vault/**"))
+    }
+
+    /// Only --force lifts bisync's --max-delete safety abort; the rest of the run,
+    /// including the access check, is an ordinary sync.
+    @Test func syncAllowingDeletesForcesOneOrdinarySync() async throws {
+        let settings = try settings(rclone: "#!/bin/sh\nprintf 'arg=%s\\n' \"$@\"\n")
+
+        let sync = await RcloneProcessRunner().run(.sync, settings: settings, transcriptURL: transcript)
+        let allowing = await RcloneProcessRunner().run(.syncAllowingDeletes, settings: settings, transcriptURL: transcript)
+
+        #expect(allowing.lines == sync.lines + ["arg=--force"])
     }
 
     @Test func largeOutputKeepsTheEndAndBoundsTheTranscript() async throws {

@@ -41,9 +41,26 @@ struct MenuTests {
         #expect(fix?.actionTitle == nil)
     }
 
+    /// Sync Now stops the same way, so the menu names the side that lost the files
+    /// and offers either to let the sync delete them or to copy them back.
+    @Test(arguments: [
+        (RcloneOutput.tooManyDeletesLocally, SyncProblem.Side.localFolder, "OneDrive"),
+        (RcloneOutput.tooManyDeletes, .oneDrive, "your folder"),
+    ])
+    func tooManyDeletesOffersToAllowThemOrResyncInsteadOfTryingAgain(output: [String], side: SyncProblem.Side, otherSide: String) {
+        let fix = MenuBarView.fix(for: .unhealthy(reason: "Over half the files were deleted"), transcriptLines: output)
+
+        #expect(fix == .allowDeletes(side))
+        #expect(fix?.actionTitle == "Allow Deletes and Sync…")
+        #expect(fix?.advice == """
+            Syncing stopped rather than delete them from \(otherSide) too.
+            If you meant to delete them, choose Allow Deletes and Sync…
+            If not, choose Resync… to copy them back from \(otherSide).
+            """)
+    }
+
     @Test(arguments: [
         RcloneOutput.unreachableDNS,
-        RcloneOutput.tooManyDeletes,
         // rclone mentions --resync here only to say it is not needed.
         ["ERROR : Bisync aborted. Error is retryable without --resync due to --resilient mode."],
         [],
@@ -88,12 +105,31 @@ struct MenuTests {
         #expect(folder.message.contains("deletes them from OneDrive too"))
     }
 
+    /// Cancel is the safe choice, so the confirmation says which side loses the
+    /// files, that it cannot be undone, and how to get them back instead.
+    @Test func deletesConfirmationWarnsWhichSideLosesTheFilesAndOffersResyncInstead() {
+        let folder = MenuBarView.deletesConfirmation(deletedFrom: .localFolder, settings: Self.settings)
+        #expect(folder.title == "Delete these files from OneDrive too?")
+        #expect(folder.message.hasPrefix("Over half the files in /Users/craig/OneDrive were deleted since the last sync, so syncing stopped rather than delete them from OneDrive (onedrive-work:) too."))
+        #expect(folder.message.contains("Look in /Users/craig/OneDrive first. If you did not mean to delete them, cancel and choose Resync…, which copies them back from OneDrive (onedrive-work:)."))
+        #expect(folder.message.hasSuffix("so the files are deleted from OneDrive (onedrive-work:) as well. This app cannot undo that."))
+
+        let oneDrive = MenuBarView.deletesConfirmation(deletedFrom: .oneDrive, settings: Self.settings)
+        #expect(oneDrive.title == "Delete these files from your folder too?")
+        #expect(oneDrive.message.contains("Look in OneDrive (onedrive-work:) first."))
+        #expect(oneDrive.message.contains("copies them back from /Users/craig/OneDrive."))
+        #expect(oneDrive.message.hasSuffix("so the files are deleted from /Users/craig/OneDrive as well. This app cannot undo that."))
+    }
+
     @Test func resyncConfirmationSaysWhyAndWhatItDoesHere() {
-        let suggested = MenuBarView.resyncConfirmation(suggested: true, settings: Self.settings)
+        let suggested = MenuBarView.resyncConfirmation(for: .resync, settings: Self.settings)
         #expect(suggested.hasPrefix("rclone lost its record of the last sync"))
         #expect(suggested.contains("Resync makes OneDrive (onedrive-work:) and /Users/craig/OneDrive match."))
 
-        let unprompted = MenuBarView.resyncConfirmation(suggested: false, settings: Self.settings)
+        let restoring = MenuBarView.resyncConfirmation(for: .allowDeletes(.localFolder), settings: Self.settings)
+        #expect(restoring.hasPrefix("Over half the files in your folder were deleted since the last sync. If you did not mean to delete them, a resync copies them back from OneDrive."))
+
+        let unprompted = MenuBarView.resyncConfirmation(for: .tryAgain, settings: Self.settings)
         #expect(unprompted.hasPrefix("The latest sync does not need a resync."))
     }
 

@@ -333,6 +333,38 @@ struct FailureScenarioTests {
         #expect(await harness.runner.runs.isEmpty)
     }
 
+    /// Every sync stops at bisync's safety abort, so the first scheduled one needs
+    /// attention and notifies without Sync Now. Either offered way out recovers:
+    /// a sync that allows the deletions, or a resync that copies the files back.
+    @Test(arguments: [RcloneProcessRunner.RunKind.syncAllowingDeletes, .resync])
+    func tooManyDeletesStopsEverySyncUntilTheDeletionsAreAllowedOrUndone(recovery: RcloneProcessRunner.RunKind) async throws {
+        let harness = try Harness()
+        try await harness.prepareBisync()
+        await harness.coordinator.load()
+        await harness.coordinator.run(.resync)
+
+        await harness.runner.deleteMostFiles(from: .localFolder)
+        await harness.scheduler.fire()
+
+        let reason = "Over half the files in your folder were deleted since the last sync"
+        #expect(harness.coordinator.status == .unhealthy(reason: reason))
+        #expect(MenuBarView.fix(for: harness.coordinator.status, transcriptLines: harness.coordinator.transcriptLines) == .allowDeletes(.localFolder))
+        #expect(harness.notifier.posted.map(\.actions) == [[.showLog]])
+        await harness.coordinator.run(.sync)
+        #expect(harness.coordinator.status == .unhealthy(reason: reason))
+
+        harness.clock.advance(by: 60)
+        recovery == .resync ? harness.coordinator.resync() : harness.coordinator.syncAllowingDeletes()
+        await harness.runner.waitForRuns(4)
+        try await waitUntil { !harness.coordinator.isRunning }
+        harness.clock.advance(by: 10 * 60)
+        await harness.scheduler.fire()
+
+        #expect(await harness.runner.runs == [.resync, .sync, .sync, recovery, .sync])
+        #expect(harness.coordinator.status == .healthy(lastSuccess: harness.clock.now))
+        #expect(harness.notifier.posted.last == .syncRecovered)
+    }
+
     @Test func lostBisyncStateIsFixedByTheOfferedResync() async throws {
         let harness = try Harness()
         try await harness.prepareBisync()
