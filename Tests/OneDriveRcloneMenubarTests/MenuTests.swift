@@ -19,6 +19,10 @@ struct MenuTests {
         #expect(MenuBarView.advice(for: .unhealthy(reason: "Failed to bisync"), transcriptLines: transcript) == Self.resyncAdvice)
     }
 
+    @Test func bisyncWithoutItsPriorListingsSaysSo() {
+        #expect(MenuBarView.advice(for: .unhealthy(reason: "x"), transcriptLines: RcloneOutput.needsResync) == Self.resyncAdvice)
+    }
+
     @Test(arguments: [
         // rclone mentions --resync here only to say it is not needed.
         ["ERROR : Bisync aborted. Error is retryable without --resync due to --resilient mode."],
@@ -32,6 +36,22 @@ struct MenuTests {
     @Test(arguments: [SyncStatus.healthy(lastSuccess: .now), .running, .waitingForFirstSync, .disabled(reason: "x")])
     func onlyNeedsAttentionGivesAdvice(status: SyncStatus) {
         #expect(MenuBarView.advice(for: status, transcriptLines: ["Must run --resync to recover."]) == nil)
+    }
+
+    @Test(arguments: [
+        (RcloneOutput.checkFileMissingOnOneDrive, "Needs attention: The RCLONE_TEST check file is missing from OneDrive"),
+        (RcloneOutput.needsResync, "Needs attention: rclone lost track of the last sync"),
+        (RcloneOutput.signInExpired, "Needs attention: The OneDrive sign-in has expired"),
+    ] as [([String], String)])
+    func firstRowNamesTheProblem(output: [String], headline: String) throws {
+        let reason = try #require(SyncProblem(rcloneOutput: output)).name
+
+        #expect(SyncStatus.unhealthy(reason: reason).headline == headline)
+    }
+
+    @Test(arguments: [SyncStatus.healthy(lastSuccess: .now), .running, .waitingForFirstSync, .disabled(reason: "x")])
+    func otherStatesKeepTheirTitleAsTheFirstRow(status: SyncStatus) {
+        #expect(status.headline == status.title)
     }
 
     @Test(arguments: [

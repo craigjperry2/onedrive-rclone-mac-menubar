@@ -17,6 +17,13 @@ enum SyncStatus: Equatable, Sendable {
         }
     }
 
+    /// The menu's first row. Needs attention names the problem there, so it is the
+    /// first thing the user reads.
+    var headline: String {
+        guard case .unhealthy(let reason) = self else { return title }
+        return "\(title): \(reason)"
+    }
+
     var symbolName: String {
         switch self {
         case .disabled: "pause.circle"

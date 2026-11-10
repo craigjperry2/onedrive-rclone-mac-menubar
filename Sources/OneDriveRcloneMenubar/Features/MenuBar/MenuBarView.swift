@@ -6,7 +6,7 @@ struct MenuBarView: View {
 
     var body: some View {
         Group {
-            Text(coordinator.status.title)
+            lines(coordinator.status.headline)
             if let explanation = coordinator.status.explanation { lines(explanation) }
             if let loginWarning = coordinator.loginWarning {
                 lines(loginWarning)
@@ -16,7 +16,7 @@ struct MenuBarView: View {
             if let lastSuccess = coordinator.latestRun?.lastSuccessAt {
                 Text("Last successful sync: \(lastSuccess.formatted(date: .abbreviated, time: .shortened))")
             }
-            if let reason = coordinator.status.reason { lines(reason) }
+            if case .disabled(let reason) = coordinator.status { lines(reason) }
             if let advice = Self.advice(for: coordinator.status, transcriptLines: coordinator.transcriptLines) { lines(advice) }
             if let skip = coordinator.activity.entries.last, skip.outcome == .skipped(.lowDataNetwork) {
                 Text("Scheduled syncs paused on a low-data network")
@@ -66,8 +66,7 @@ struct MenuBarView: View {
     /// error retryable under --resilient); anything else may pass on the next attempt.
     static func advice(for status: SyncStatus, transcriptLines: [String]) -> String? {
         guard case .unhealthy = status else { return nil }
-        let needsResync = ["must run --resync", "cannot find prior Path1 or Path2 listings"]
-        if transcriptLines.contains(where: { line in needsResync.contains { line.localizedCaseInsensitiveContains($0) } }) {
+        if SyncProblem(rcloneOutput: transcriptLines) == .needsResync {
             return "rclone needs a resync to recover.\nChoose Resync… to run one."
         }
         return "Choose Sync Now to try again.\nLatest run shows what rclone reported."

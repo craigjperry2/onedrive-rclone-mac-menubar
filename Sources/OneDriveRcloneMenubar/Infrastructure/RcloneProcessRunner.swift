@@ -146,10 +146,12 @@ actor RcloneProcessRunner: RcloneRunning {
             }
         }
         let timeoutReason = execution.timedOut ? "rclone timed out after \(Int(timeout / 60)) minutes." : nil
+        // All of the kept output, not just the displayed end, since the cause comes before bisync's summary.
+        let problem = SyncProblem(rcloneOutput: String(decoding: outputData, as: UTF8.self).components(separatedBy: .newlines))
         return Result(
             exitCode: execution.exitCode,
             lines: lines,
-            failureReason: execution.launchError ?? timeoutReason ?? lines.last,
+            failureReason: execution.launchError ?? timeoutReason ?? problem?.name,
             persistenceWarning: persistenceWarning
         )
     }
