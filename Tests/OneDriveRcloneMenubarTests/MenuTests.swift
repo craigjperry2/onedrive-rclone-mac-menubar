@@ -52,7 +52,7 @@ struct MenuTests {
         let fix = MenuBarView.fix(for: .unhealthy(reason: "x"), transcriptLines: output)
 
         #expect(fix == .tryAgain)
-        #expect(fix?.advice == "Choose Sync Now to try again.\nLatest run shows what rclone reported.")
+        #expect(fix?.advice == "Choose Sync Now to try again.\nRun Output shows what rclone reported.")
         #expect(fix?.actionTitle == nil)
     }
 
@@ -97,7 +97,7 @@ struct MenuTests {
         #expect(unprompted.hasPrefix("The latest sync does not need a resync."))
     }
 
-    // MARK: Latest run
+    // MARK: Run Output
 
     /// rclone 1.75.2's output from a bisync without prior listings, run with the
     /// app's arguments, after a NOTICE as older versions printed first.
@@ -212,6 +212,36 @@ struct MenuTests {
         SyncRunRecord(startedAt: .now, finishedAt: .now, outcome: outcome, failureReason: nil, lastSuccessAt: nil)
     }
 
+    nonisolated static let now = Date(timeIntervalSinceReferenceDate: 800_000_000)
+
+    @Test(arguments: [
+        // Healthy: how long ago, and when next, without a date or year.
+        (SyncStatus.healthy(lastSuccess: now - 250), SyncRunRecord.succeeded(at: now - 250), now + 380, false, "Synced 4 min ago · next sync in 6 min"),
+        (.healthy(lastSuccess: now - 50), .succeeded(at: now - 50), now + 40, false, "Synced just now · next sync in under a minute"),
+        (.healthy(lastSuccess: now - 250), .succeeded(at: now - 250), now + 380, true, "Synced 4 min ago\nNext scheduled sync will be skipped: low-data network"),
+        (.waitingForFirstSync, nil, now + 540, false, "Next sync in 9 min"),
+        (.waitingForFirstSync, nil, now + 540, true, "Next scheduled sync will be skipped: low-data network"),
+        // After a failure, or when syncs have stopped working: how long since the last good sync.
+        (.unhealthy(reason: "x"), .failed(at: now - 60, lastSuccess: now - 8100), now + 300, false, "Last good sync 2 h ago · next sync in 5 min"),
+        (.unhealthy(reason: "x"), .succeeded(at: now - 3599), now + 300, false, "Last good sync 59 min ago · next sync in 5 min"),
+        (.unhealthy(reason: "x"), .failed(at: now - 60, lastSuccess: now - 86340), now + 300, false, "Last good sync 23 h ago · next sync in 5 min"),
+        (.unhealthy(reason: "x"), .failed(at: now - 60, lastSuccess: now - 3 * 86400 - 7200), now + 300, false, "Last good sync 3 days ago · next sync in 5 min"),
+        (.unhealthy(reason: "x"), .failed(at: now - 60, lastSuccess: nil), now + 300, false, "Next sync in 5 min"),
+        (.paused(.retrying(failure: "x")), .failed(at: now - 60, lastSuccess: now - 8100), now + 300, false, "Last good sync 2 h ago · next sync in 5 min"),
+        // Paused on a low-data network says so in its headline; once the network is normal, the next sync runs.
+        (.paused(.lowDataNetwork), .succeeded(at: now - 2460), now + 300, true, "Synced 41 min ago"),
+        (.paused(.lowDataNetwork), .succeeded(at: now - 2460), now + 300, false, "Synced 41 min ago · next sync in 5 min"),
+        // Syncing, Disabled, and an unplugged drive say why no scheduled sync runs next.
+        (.running, .succeeded(at: now - 250), now + 380, false, "Synced 4 min ago"),
+        (.running, .failed(at: now - 60, lastSuccess: now - 8100), now + 380, false, "Last good sync 2 h ago"),
+        (.disabled(reason: "x"), .succeeded(at: now - 86400), now + 380, false, "Last good sync 1 day ago"),
+        (.paused(.volumeUnavailable), .failed(at: now - 60, lastSuccess: now - 8100), now + 380, false, "Last good sync 2 h ago"),
+        (.disabled(reason: "x"), nil, now + 380, false, nil),
+    ] as [(SyncStatus, SyncRunRecord?, Date, Bool, String?)])
+    func syncTimesAreRelative(status: SyncStatus, latestRun: SyncRunRecord?, next: Date, lowData: Bool, expected: String?) {
+        #expect(MenuBarView.syncTimes(status: status, latestRun: latestRun, nextScheduledSync: next, onLowDataNetwork: lowData, now: Self.now) == expected)
+    }
+
     // MARK: Version and icons
 
     @Test(arguments: [
@@ -253,5 +283,15 @@ struct MenuTests {
         for symbol in symbols {
             #expect(NSImage(systemSymbolName: symbol, accessibilityDescription: nil) != nil, "\(symbol) is not an SF Symbol")
         }
+    }
+}
+
+private extension SyncRunRecord {
+    static func succeeded(at date: Date) -> SyncRunRecord {
+        SyncRunRecord(startedAt: date - 30, finishedAt: date, outcome: .success, lastSuccessAt: date)
+    }
+
+    static func failed(at date: Date, lastSuccess: Date?) -> SyncRunRecord {
+        SyncRunRecord(startedAt: date - 30, finishedAt: date, outcome: .failure, failureReason: "x", lastSuccessAt: lastSuccess)
     }
 }

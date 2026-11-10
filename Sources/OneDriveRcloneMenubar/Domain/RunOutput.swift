@@ -1,6 +1,6 @@
 import Foundation
 
-/// rclone's output from the latest run, arranged for the Latest run submenu and for
+/// rclone's output from the latest run, arranged for the Run Output submenu and for
 /// Copy Error Details. rclone starts each message with a timestamp; the lines after
 /// it that have none, such as bisync's tips under an error, belong to that message.
 struct RunOutput {

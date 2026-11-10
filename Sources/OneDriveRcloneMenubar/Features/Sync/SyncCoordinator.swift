@@ -123,6 +123,13 @@ final class SyncCoordinator: ObservableObject {
 
     var isRunning: Bool { running }
 
+    /// When the schedule next tries to sync.
+    var nextScheduledSync: Date? { scheduler.nextFireDate }
+
+    /// Whether the next scheduled sync would be skipped for the network, as
+    /// `runScheduledSync()` decides when it fires.
+    var isOnLowDataNetworkNow: Bool { isOnLowDataNetwork() }
+
     func refreshStatus() {
         guard let settings else {
             status = .disabled(reason: "No valid rclone configuration was found.")
