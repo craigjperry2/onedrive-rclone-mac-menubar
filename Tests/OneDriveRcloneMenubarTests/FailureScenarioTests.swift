@@ -62,7 +62,7 @@ struct FailureScenarioTests {
 
         #expect(await harness.runner.runs == [.sync, .sync])
         #expect(harness.coordinator.status == .healthy(lastSuccess: harness.clock.now))
-        #expect(harness.notifier.posted.count == 1)
+        #expect(harness.notifier.posted == [.configurationUnusable(SyncSettings.rcloneRequired), .syncRecovered])
     }
 
     /// Such as `nix profile remove rclone` on a Mac that also has Homebrew's rclone.
@@ -161,7 +161,7 @@ struct FailureScenarioTests {
         #expect(MenuBarView.fix(for: harness.coordinator.status, transcriptLines: harness.coordinator.transcriptLines) == .reconnectDrive)
         #expect(TranscriptStore(fileURL: harness.paths.latestTranscriptFile).displayLines() == [reason])
         #expect(harness.coordinator.activity.entries.map(\.outcome) == [.failed(reason: reason)])
-        #expect(harness.notifier.posted == [.syncFailed(at: harness.clock.now)])
+        #expect(harness.notifier.posted == [.syncFailed(reason: reason, transcriptLines: [reason], at: harness.clock.now)])
     }
 
     // MARK: Fixes the menu offers
@@ -187,6 +187,30 @@ struct FailureScenarioTests {
         #expect(await harness.runner.remoteCheckFiles == 1)
         #expect(await harness.runner.runs == [.resync, .sync, .sync, .sync])
         #expect(harness.coordinator.status == .healthy(lastSuccess: harness.clock.now))
+    }
+
+    @Test func notificationNamesAMissingCheckFileAndSaysWhenTheOfferedFixWorked() async throws {
+        let harness = try Harness()
+        try await harness.prepareBisync()
+        await harness.coordinator.load()
+        await harness.coordinator.run(.resync)
+
+        await harness.runner.deleteRemoteCheckFile()
+        await harness.scheduler.fire()
+        await harness.scheduler.fire()
+
+        #expect(harness.notifier.posted.count == 1)
+        let notification = try #require(harness.notifier.posted.first)
+        #expect(notification.body.hasPrefix("The RCLONE_TEST check file is missing from OneDrive. The scheduled sync at "))
+        #expect(notification.body.hasSuffix(" Open OneDrive Sync in the menu bar and choose Recreate Check File on OneDrive…"))
+        #expect(notification.actions == [.showLog])
+
+        harness.clock.advance(by: 60)
+        #expect(await harness.coordinator.recreateCheckFile(missingFrom: .oneDrive) == nil)
+        await harness.scheduler.fire()
+
+        #expect(harness.coordinator.status == .healthy(lastSuccess: harness.clock.now))
+        #expect(harness.notifier.posted == [notification, .syncRecovered])
     }
 
     @Test func checkFileMissingFromTheFolderIsRecreatedThereWithoutTouchingOneDrive() async throws {

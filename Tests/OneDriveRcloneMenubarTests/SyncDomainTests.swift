@@ -95,6 +95,43 @@ struct SyncDomainTests {
         #expect(log.recent.first?.finishedAt == at(16, 29))
     }
 
+    /// The notification names the problem and the fix the menu offers for it, and
+    /// offers Sync Now only when trying again is that fix.
+    @Test(arguments: [
+        (RcloneOutput.checkFileMissingOnOneDrive, "The RCLONE_TEST check file is missing from OneDrive. ", " Open OneDrive Sync in the menu bar and choose Recreate Check File on OneDrive…", [.showLog]),
+        (RcloneOutput.checkFileMissingLocally, "The RCLONE_TEST check file is missing from your folder. ", " Open OneDrive Sync in the menu bar and choose Recreate Check File in Your Folder…", [.showLog]),
+        // rclone also asks for a resync here, but only the check file fixes it.
+        (RcloneOutput.resyncWithCheckFileMissingOnOneDrive, "The RCLONE_TEST check file is missing from OneDrive. ", " Open OneDrive Sync in the menu bar and choose Recreate Check File on OneDrive…", [.showLog]),
+        (RcloneOutput.needsResync, "rclone lost track of the last sync. ", " Open OneDrive Sync in the menu bar and choose Resync…", [.showLog]),
+        (RcloneOutput.signInExpired, "The OneDrive sign-in has expired. ", " Every sync fails until rclone signs in again.", [.showLog]),
+        (RcloneOutput.unreachableDNS, "OneDrive cannot be reached. ", " stopped.", [.syncNow, .showLog]),
+    ] as [([String], String, String, [SyncNotification.Action])])
+    func failureNotificationNamesTheProblemAndOffersOnlyFixesThatCanHelp(output: [String], bodyStart: String, bodyEnd: String, actions: [SyncNotification.Action]) throws {
+        let reason = try #require(SyncProblem(rcloneOutput: output)).name
+
+        let notification = SyncNotification.syncFailed(reason: reason, transcriptLines: output, at: .now)
+
+        #expect(notification.body.hasPrefix(bodyStart + "The scheduled sync at "))
+        #expect(notification.body.hasSuffix(bodyEnd))
+        #expect(notification.actions == actions)
+    }
+
+    @Test func unpluggedDriveNotificationSaysSyncingResumesWithoutOfferingSyncNow() {
+        let reason = SyncSettings.volumeUnavailable
+        let notification = SyncNotification.syncFailed(reason: reason, transcriptLines: [reason], at: .now)
+
+        #expect(notification.body.hasPrefix("The configured external volume is unavailable. The scheduled sync at "))
+        #expect(notification.body.hasSuffix(" stopped. Syncing resumes when the drive is connected again."))
+        #expect(notification.actions == [.showLog])
+    }
+
+    /// Buttons run without a confirmation, so Resync, which can overwrite files,
+    /// must never become one.
+    @Test func notificationButtonsAreOnlySyncNowAndShowLog() {
+        #expect(SyncNotification.Action.allCases.map(\.title) == ["Sync Now", "Show Log"])
+        #expect(SyncNotification.actionSets.map(SyncNotification.categoryID(for:)).sorted() == ["show-log", "sync-now", "sync-now+show-log"])
+    }
+
     @Test func transcriptStoreReturnsOnlyLatestThirtyLines() throws {
         let file = FileManager.default.temporaryDirectory.appending(path: "onedrive-rclone-transcript-\(UUID().uuidString).log")
         defer { try? FileManager.default.removeItem(at: file) }

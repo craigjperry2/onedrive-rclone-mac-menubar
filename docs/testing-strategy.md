@@ -5,7 +5,7 @@ The tests exist to show that what users rely on keeps working, including after `
 ## What the tests protect
 
 - **What the menu says.** The status, its reason, the fix offered under Needs attention, whether Sync Now and Resync are available, Recent Activity, and the version row.
-- **When the app notifies.** Only scheduled syncs notify, and only once per problem.
+- **When the app notifies.** Only scheduled syncs notify, and only once per problem. A notification names the problem, offers only buttons that cannot lose files, and the first success after a notified problem says syncing works again.
 - **Failures.** A sync fails; rclone is missing, removed, or replaced by another install; the external drive is unmounted; settings.json or a state file cannot be read or saved; no sync has worked for 25 minutes. Each failure is followed through to recovery.
 - **Safety.** Nothing changes on disk or in OneDrive until setup's first sync is confirmed. Only one rclone runs at a time. Scheduled syncs never resync and always check access. Folders that would sync too much are refused.
 - **Fiddly details.** Folder paths with trailing slashes, `..`, spaces, `%`, and non-ASCII names. Paths under `/Volumes`. Finding rclone through Nix profile symlinks and `PATH`. Reading rclone's output: only the end is kept, the reason names the problem (from real rclone output in `RcloneOutput`) or falls back to the first ERROR line, and the sign-in link is extracted. The JSON files in Application Support.
