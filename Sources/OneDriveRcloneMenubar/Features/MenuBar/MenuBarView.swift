@@ -8,6 +8,13 @@ struct MenuBarView: View {
         Group {
             lines(coordinator.status.headline)
             if let explanation = coordinator.status.explanation { lines(explanation) }
+            // The fix for a problem sits directly under the headline that names it.
+            if let fix = Self.fix(for: coordinator.status, transcriptLines: coordinator.transcriptLines) {
+                lines(fix.advice)
+                if let actionTitle = fix.actionTitle {
+                    Button(actionTitle) { perform(fix) }.disabled(!coordinator.canStartSync)
+                }
+            }
             if let loginWarning = coordinator.loginWarning {
                 lines(loginWarning)
                 Button("Open Login Items Settings…", action: LoginItemManager.openSystemSettings)
@@ -17,7 +24,6 @@ struct MenuBarView: View {
                 Text("Last successful sync: \(lastSuccess.formatted(date: .abbreviated, time: .shortened))")
             }
             if case .disabled(let reason) = coordinator.status { lines(reason) }
-            if let advice = Self.advice(for: coordinator.status, transcriptLines: coordinator.transcriptLines) { lines(advice) }
             if let skip = coordinator.activity.entries.last, skip.outcome == .skipped(.lowDataNetwork) {
                 Text("Scheduled syncs paused on a low-data network")
                 Text("Skipped \(skip.count == 1 ? "1 sync" : "\(skip.count) syncs") since \(skip.startedAt.formatted(date: .omitted, time: .shortened))")
@@ -61,15 +67,88 @@ struct MenuBarView: View {
         }
     }
 
-    /// What to do about Needs attention. Only a resync recovers when bisync says so,
-    /// or when its listings from the last run are missing (it then still calls the
-    /// error retryable under --resilient); anything else may pass on the next attempt.
-    static func advice(for status: SyncStatus, transcriptLines: [String]) -> String? {
-        guard case .unhealthy = status else { return nil }
-        if SyncProblem(rcloneOutput: transcriptLines) == .needsResync {
-            return "rclone needs a resync to recover.\nChoose Resync… to run one."
+    /// What fixes a Needs attention problem, shown under the headline that names it.
+    enum Fix: Equatable {
+        /// bisync lost its listings from the last run, and only a resync rebuilds them.
+        case resync
+        /// --check-access found RCLONE_TEST missing; every sync fails the same way
+        /// until it is back.
+        case recreateCheckFile(SyncProblem.Side)
+        /// The external drive holding the folder is not mounted.
+        case reconnectDrive
+        /// rclone's OneDrive sign-in expired, which no sync can fix.
+        case signInAgain
+        /// Nothing known; the next attempt may pass.
+        case tryAgain
+
+        var advice: String {
+            switch self {
+            case .resync: "Ordinary syncs fail until a resync rebuilds it."
+            case .recreateCheckFile: "Every sync fails until it is back."
+            case .reconnectDrive: "Syncing resumes when the drive is connected again."
+            case .signInAgain: "Every sync fails until rclone signs in again."
+            case .tryAgain: "Choose Sync Now to try again.\nLatest run shows what rclone reported."
+            }
         }
-        return "Choose Sync Now to try again.\nLatest run shows what rclone reported."
+
+        var actionTitle: String? {
+            switch self {
+            case .resync: "Resync…"
+            case .recreateCheckFile(.oneDrive): "Recreate Check File on OneDrive…"
+            case .recreateCheckFile(.localFolder): "Recreate Check File in Your Folder…"
+            case .recreateCheckFile(.both): "Recreate Check Files…"
+            case .reconnectDrive, .signInAgain, .tryAgain: nil
+            }
+        }
+    }
+
+    /// The fix for the problem in the latest run's output. Under --resilient rclone
+    /// calls a missing check file or missing listings retryable, but neither passes
+    /// on a retry: one needs the file back, the other a resync. While the drive is
+    /// unplugged the output is from an earlier run, so it does not decide the fix.
+    static func fix(for status: SyncStatus, transcriptLines: [String]) -> Fix? {
+        guard case let .unhealthy(reason) = status else { return nil }
+        if reason == SyncSettings.volumeUnavailable { return .reconnectDrive }
+        return switch SyncProblem(rcloneOutput: transcriptLines) {
+        case .needsResync: .resync
+        case .checkFileMissing(let side): .recreateCheckFile(side)
+        case .signInExpired: .signInAgain
+        case .tooManyDeletes, .oneDriveUnreachable, .unrecognized, nil: .tryAgain
+        }
+    }
+
+    /// The Resync confirmation: why it is suggested, if it is, and what it does here.
+    static func resyncConfirmation(suggested: Bool, settings: SyncSettings) -> String {
+        let why = suggested
+            ? "rclone lost its record of the last sync, so ordinary syncs fail until a resync rebuilds it."
+            : "The latest sync does not need a resync. Use it only when rclone asks for one; Sync Now handles ordinary changes."
+        return """
+        \(why)
+
+        Resync makes OneDrive (\(settings.remoteName):) and \(settings.localPath) match. Files that are only on one side are copied to the other, and nothing is deleted. If a file is on both sides with different contents, the OneDrive version replaces the one in the folder.
+        """
+    }
+
+    /// The check file confirmation, which explains why the file may be missing:
+    /// exactly the cases --check-access exists to catch.
+    static func checkFileConfirmation(missingFrom side: SyncProblem.Side, settings: SyncSettings) -> (title: String, message: String) {
+        let oneDrive = "OneDrive (\(settings.remoteName):)"
+        let (title, place, otherSide) = switch side {
+        case .oneDrive: ("Recreate the check file on OneDrive?", oneDrive, "from \(settings.localPath)")
+        case .localFolder: ("Recreate the check file in your folder?", settings.localPath, "from OneDrive")
+        case .both: ("Recreate both check files?", "both \(oneDrive) and \(settings.localPath)", "from the other side")
+        }
+        let message = """
+        Every sync first checks that RCLONE_TEST is in \(oneDrive) and in \(settings.localPath), to make sure it syncs the right account with the right folder. It is missing in \(place). That can mean:
+
+        • rclone is connected to a different account or folder
+        • files were deleted there
+
+        Look in \(place) first. If your files are missing, cancel: once the check file is back, the next sync treats them as deleted and deletes them \(otherSide) too.
+
+        Recreate adds an empty RCLONE_TEST, then syncs.
+        """
+        return (title, message)
     }
 
     /// Menu rows are single lines, so messages put each short line in its own row.
@@ -80,14 +159,43 @@ struct MenuBarView: View {
     // An NSAlert rather than .confirmationDialog: the menu closes before the
     // action runs, so a dialog attached to the menu content is never presented.
     private func confirmResync() {
+        guard let settings = coordinator.settings else { return }
+        let suggested = Self.fix(for: coordinator.status, transcriptLines: coordinator.transcriptLines) == .resync
+        guard confirm("Run recovery resync?", Self.resyncConfirmation(suggested: suggested, settings: settings), action: "Resync") else { return }
+        coordinator.resync()
+    }
+
+    private func perform(_ fix: Fix) {
+        switch fix {
+        case .resync:
+            confirmResync()
+        case let .recreateCheckFile(side):
+            guard let settings = coordinator.settings else { return }
+            let confirmation = Self.checkFileConfirmation(missingFrom: side, settings: settings)
+            guard confirm(confirmation.title, confirmation.message, action: "Recreate and Sync") else { return }
+            Task {
+                guard let failure = await coordinator.recreateCheckFile(missingFrom: side) else { return }
+                let alert = NSAlert()
+                alert.messageText = "The check file could not be recreated."
+                alert.informativeText = failure
+                NSApp.activate()
+                alert.runModal()
+            }
+        case .reconnectDrive, .signInAgain, .tryAgain:
+            break
+        }
+    }
+
+    /// Asks before a fix that changes files. Cancel stays the default button.
+    private func confirm(_ title: String, _ message: String, action: String) -> Bool {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Run recovery resync?"
-        alert.informativeText = "Resync can overwrite files. Use it only to initialize or recover rclone bisync."
-        alert.addButton(withTitle: "Resync").hasDestructiveAction = true
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: action).hasDestructiveAction = true
         alert.addButton(withTitle: "Cancel")
         NSApp.activate()
-        if alert.runModal() == .alertFirstButtonReturn { coordinator.resync() }
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     // Release builds get MARKETING_VERSION and CURRENT_PROJECT_VERSION from CI;

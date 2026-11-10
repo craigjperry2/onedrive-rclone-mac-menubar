@@ -55,6 +55,8 @@ Disable `homeNetwork.onedriveRclone` before relying on this app's automatic sche
 
 ## Recovery
 
+When a sync needs attention, the menu names the problem and, when there is one, puts its fix directly below: **Resync…** when rclone lost track of the last sync, or **Recreate Check File…** when `RCLONE_TEST` is missing from OneDrive or your folder. A missing check file can mean rclone is connected to the wrong account or folder, or that files were deleted, so check that side before recreating it; the app asks first and then syncs.
+
 Use **Sync Now** for an ordinary immediate run. Use **Resync** only for initialization or recovery after rclone requires it. The app asks for confirmation because `rclone bisync --resync` can overwrite files according to rclone's recovery mode.
 
 ## Development

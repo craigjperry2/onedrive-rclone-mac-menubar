@@ -4,7 +4,7 @@ The tests exist to show that what users rely on keeps working, including after `
 
 ## What the tests protect
 
-- **What the menu says.** The status, its reason, the advice under Needs attention, whether Sync Now and Resync are available, Recent Activity, and the version row.
+- **What the menu says.** The status, its reason, the fix offered under Needs attention, whether Sync Now and Resync are available, Recent Activity, and the version row.
 - **When the app notifies.** Only scheduled syncs notify, and only once per problem.
 - **Failures.** A sync fails; rclone is missing, removed, or replaced by another install; the external drive is unmounted; settings.json or a state file cannot be read or saved; no sync has worked for 25 minutes. Each failure is followed through to recovery.
 - **Safety.** Nothing changes on disk or in OneDrive until setup's first sync is confirmed. Only one rclone runs at a time. Scheduled syncs never resync and always check access. Folders that would sync too much are refused.
@@ -23,7 +23,7 @@ The tests exist to show that what users rely on keeps working, including after `
 | Packaged app | `scripts/smoke-test-app.sh` | The release build, zipped and installed by `nix/package.nix`, launched from `/nix/store` through Launch Services with a throwaway home, rclone from nixpkgs in `~/.nix-profile`, and a fake OneDrive. Checks: settings created on first launch, skipped syncs without rclone, a failing first sync that asks for a resync, syncing both ways, and rclone removed while running | CI on macOS for every pull request, and again on the exact zip before each release |
 | Manual | [testing-with-fake-onedrive.md](testing-with-fake-onedrive.md) | How the menu and setup window look, and how notifications appear. On a real Mac only: Microsoft sign-in, and the login item across a Nix upgrade | Before releases that change them |
 
-The SwiftUI views are not unit tested. Logic in a view that decides what the user sees moves into a function that can be tested, as `MenuBarView.advice(for:transcriptLines:)` does.
+The SwiftUI views are not unit tested. Logic in a view that decides what the user sees moves into a function that can be tested, as `MenuBarView.fix(for:transcriptLines:)` does.
 
 ## Writing tests
 

@@ -20,6 +20,7 @@ struct SyncSettings: Codable, Equatable, Sendable {
     // Menu rows are single lines, so long explanations break into short lines.
     static let readyToSetUp = "This Mac is ready to configure OneDrive sync.\nChoose Set Up OneDrive… to connect your account."
     static let rcloneRequired = "rclone is required before OneDrive sync can be configured.\nInstall it with Homebrew (brew install rclone) or Nix."
+    static let volumeUnavailable = "The configured external volume is unavailable."
 
     /// Where Homebrew (Apple silicon and Intel) and Nix install rclone, followed by
     /// the app's PATH, which for a login item is usually only the system directories.
@@ -63,7 +64,7 @@ struct SyncSettings: Codable, Equatable, Sendable {
     func availabilityError(fileManager: FileManager = .default) -> String? {
         if localPath.hasPrefix("/Volumes/") {
             let volumeName = localPath.dropFirst("/Volumes/".count).split(separator: "/").first.map(String.init) ?? ""
-            guard fileManager.fileExists(atPath: "/Volumes/\(volumeName)") else { return "The configured external volume is unavailable." }
+            guard fileManager.fileExists(atPath: "/Volumes/\(volumeName)") else { return Self.volumeUnavailable }
         }
         return nil
     }

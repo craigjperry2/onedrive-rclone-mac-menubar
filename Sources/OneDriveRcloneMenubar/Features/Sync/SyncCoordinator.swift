@@ -21,7 +21,7 @@ final class SyncCoordinator: ObservableObject {
     private let isOnLowDataNetwork: @MainActor () -> Bool
     private let notifier: any SyncNotifying
     private let now: @MainActor () -> Date
-    private var settings: SyncSettings?
+    private(set) var settings: SyncSettings?
     private var remoteValidationError: String?
     private var validatedConfiguration: ConfigurationSnapshot?
     private var scheduledInterval: TimeInterval?
@@ -94,6 +94,26 @@ final class SyncCoordinator: ObservableObject {
 
     func syncNow() { Task { await run(.sync) } }
     func resync() { Task { await run(.resync) } }
+
+    /// Puts back the RCLONE_TEST file that bisync's --check-access found missing,
+    /// then syncs. Returns why the file could not be created, or nil. A missing
+    /// local folder is not recreated, since that is a different problem.
+    func recreateCheckFile(missingFrom side: SyncProblem.Side) async -> String? {
+        guard !running, let settings else { return nil }
+        if side != .oneDrive {
+            let checkFile = URL(filePath: settings.localPath).appending(path: "RCLONE_TEST")
+            if !FileManager.default.fileExists(atPath: checkFile.path(percentEncoded: false)) {
+                do {
+                    try Data().write(to: checkFile)
+                } catch {
+                    return "RCLONE_TEST could not be created in \(settings.localPath): \(error.localizedDescription)"
+                }
+            }
+        }
+        if side != .localFolder, let failure = await runner.createRemoteCheckFile(settings) { return failure }
+        await run(.sync)
+        return nil
+    }
 
     var canStartSync: Bool {
         guard !running else { return false }

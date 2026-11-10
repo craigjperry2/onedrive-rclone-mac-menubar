@@ -352,6 +352,24 @@ enum RcloneOutput {
         "2026/11/09 21:26:30 ERROR : \u{1B}[33mBisync aborted. Error is retryable without --resync due to --resilient mode.\u{1B}[0m",
         "2026/11/09 21:26:30 NOTICE: Failed to bisync: bisync aborted",
     ]
+    /// RCLONE_TEST deleted from both sides after a successful sync.
+    static let checkFileMissingOnBothSides = [
+        "2026/11/09 21:29:24 NOTICE: --check-access: \u{1B}[31mFailed to find any files named \u{1B}[36mRCLONE_TEST\u{1B}[0m",
+        " More info: \u{1B}[34mhttps://rclone.org/bisync/#check-access\u{1B}[0m\u{1B}[0m",
+        "2026/11/09 21:29:24 ERROR : Access test failed: Path1 count 0, Path2 count 0 - RCLONE_TEST",
+        "2026/11/09 21:29:24 ERROR : \u{1B}[31mBisync critical error: check file check failed\u{1B}[0m",
+        "2026/11/09 21:29:24 ERROR : \u{1B}[33mBisync aborted. Error is retryable without --resync due to --resilient mode.\u{1B}[0m",
+        "2026/11/09 21:29:24 NOTICE: Failed to bisync: bisync aborted",
+    ]
+    /// A resync with the check file missing on OneDrive: rclone asks for another
+    /// resync, which fails the same way until the file is back.
+    static let resyncWithCheckFileMissingOnOneDrive = [
+        "2026/11/09 21:29:24 ERROR : Access test failed: Path1 count 0, Path2 count 1 - RCLONE_TEST",
+        "2026/11/09 21:29:24 ERROR : - \u{1B}[34m\u{1B}[0m         \u{1B}[35mAccess test failed: Path2 file not found in Path1\u{1B}[0m - \u{1B}[36mRCLONE_TEST\u{1B}[0m",
+        "2026/11/09 21:29:24 ERROR : \u{1B}[31mBisync critical error: check file check failed\u{1B}[0m",
+        "2026/11/09 21:29:24 ERROR : \u{1B}[31mBisync aborted. Must run --resync to recover.\u{1B}[0m",
+        "2026/11/09 21:29:24 NOTICE: Failed to bisync: bisync aborted",
+    ]
     /// 6 of 8 files deleted from the fake OneDrive, over bisync's default --max-delete of 50%.
     static let tooManyDeletes = [
         "2026/11/09 21:26:35 ERROR : Safety abort: too many deletes (>50%, 6 of 8) on Path1 \"/Users/runner/onedrive-fake/remote/\". Run with --force if desired.",

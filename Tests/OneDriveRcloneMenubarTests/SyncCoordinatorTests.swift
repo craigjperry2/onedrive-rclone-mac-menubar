@@ -334,6 +334,17 @@ final class Harness {
         try store.save(updated)
     }
 
+    /// Makes the fake runner act like bisync over the local folder, with RCLONE_TEST
+    /// on both sides as setup leaves it. Returns the local check file.
+    @discardableResult
+    func prepareBisync() async throws -> URL {
+        let checkFile = URL(filePath: settings.localPath).appending(path: "RCLONE_TEST")
+        try FileManager.default.createDirectory(at: checkFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data().write(to: checkFile)
+        await runner.actLikeBisync()
+        return checkFile
+    }
+
     /// Puts an executable at `path`, as installing rclone there would.
     @discardableResult
     func installRclone(at path: String) throws -> String {
@@ -405,13 +416,21 @@ actor FakeRcloneRunner: RcloneRunning {
     private var authorization: CheckedContinuation<String?, Never>?
     private var validationError: String?
     private var exitCode: Int32 = 0
-    private var lastLine: String?
+    private var output: [String] = []
+    private var actsLikeBisync = false
+    private var hasListings = false
+    private(set) var remoteHasCheckFile = true
     private var holdNext = false
     private var held: CheckedContinuation<Void, Never>?
     private var runWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
     func setValidationError(_ error: String?) { validationError = error }
-    func setExitCode(_ code: Int32, lastLine: String? = nil) { exitCode = code; self.lastLine = lastLine }
+    func setExitCode(_ code: Int32, lastLine: String? = nil) { exitCode = code; output = lastLine.map { [$0] } ?? [] }
+    /// From now on, runs act like the app's `rclone bisync` with what rclone 1.75
+    /// prints: a sync fails until a resync has run, and any run fails while
+    /// RCLONE_TEST is missing on OneDrive or in the local folder.
+    func actLikeBisync() { actsLikeBisync = true }
+    func deleteRemoteCheckFile() { remoteHasCheckFile = false }
     /// Keeps the next run in progress until `releaseHeldRun()`; later runs finish at once.
     func holdNextRun() { holdNext = true }
     func releaseHeldRun() { held?.resume(); held = nil }
@@ -449,6 +468,7 @@ actor FakeRcloneRunner: RcloneRunning {
 
     func createRemoteCheckFile(_ settings: SyncSettings) async -> String? {
         remoteCheckFiles += 1
+        if remoteCheckFileFailure == nil { remoteHasCheckFile = true }
         return remoteCheckFileFailure
     }
 
@@ -466,7 +486,21 @@ actor FakeRcloneRunner: RcloneRunning {
             holdNext = false
             await withCheckedContinuation { held = $0 }
         }
-        return RcloneProcessRunner.Result(exitCode: exitCode, lines: lastLine.map { [$0] } ?? [], failureReason: lastLine, persistenceWarning: nil)
+        let (exitCode, lines) = actsLikeBisync ? bisync(kind, localPath: settings.localPath) : (exitCode, output)
+        // Like the real runner, bisync failures are reported by the problem they name.
+        return RcloneProcessRunner.Result(exitCode: exitCode, lines: lines, failureReason: actsLikeBisync ? SyncProblem(rcloneOutput: lines)?.name : lines.last, persistenceWarning: nil)
+    }
+
+    // A resync that fails the access check also loses the listings, as in rclone.
+    private func bisync(_ kind: RcloneProcessRunner.RunKind, localPath: String) -> (Int32, [String]) {
+        if kind == .sync, !hasListings { return (7, RcloneOutput.needsResync) }
+        let folderHasCheckFile = FileManager.default.fileExists(atPath: URL(filePath: localPath).appending(path: "RCLONE_TEST").path(percentEncoded: false))
+        switch (remoteHasCheckFile, folderHasCheckFile) {
+        case (true, true): hasListings = hasListings || kind == .resync; return (0, [])
+        case (false, true): hasListings = hasListings && kind == .sync; return (7, RcloneOutput.checkFileMissingOnOneDrive)
+        case (true, false): hasListings = hasListings && kind == .sync; return (7, RcloneOutput.checkFileMissingLocally)
+        case (false, false): hasListings = hasListings && kind == .sync; return (7, RcloneOutput.checkFileMissingOnBothSides)
+        }
     }
 }
 
